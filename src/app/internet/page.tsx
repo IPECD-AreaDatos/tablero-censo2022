@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { Wifi, ChevronLeft, BarChart2, Table as TableIcon, Loader2 } from 'lucide-react';
 import {
@@ -22,7 +23,7 @@ export default function InternetPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/internet');
+        const res = await fetch(apiPath('/api/internet'));
         const json = await res.json();
         setData(json);
       } catch (err) {

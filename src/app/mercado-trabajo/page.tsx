@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { Briefcase, ChevronLeft, Table as TableIcon, BarChart2, Loader2 } from 'lucide-react';
 import {
@@ -35,7 +36,7 @@ export default function MercadoTrabajoPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/mercado-trabajo');
+        const res = await fetch(apiPath('/api/mercado-trabajo'));
         const json = await res.json();
         setData(json.departamentos || []);
       } catch (e) {

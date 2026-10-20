@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { Droplets, ChevronLeft, BarChart2, Table as TableIcon, Loader2 } from 'lucide-react';
 import {
@@ -24,7 +25,7 @@ export default function AguaPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/agua');
+        const res = await fetch(apiPath('/api/agua'));
         const json = await res.json();
         setData(json);
       } catch (err) {

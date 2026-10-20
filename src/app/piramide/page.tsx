@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import {
   ResponsiveContainer,
   BarChart,
@@ -44,7 +45,7 @@ export default function PiramidePage() {
     async function fetchData() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/piramide?year=${selectedYear}`);
+        const res = await fetch(apiPath(`/api/piramide?year=${selectedYear}`));
         if (!res.ok) throw new Error('Error al cargar datos');
         const data: ApiResponse = await res.json();
         setPiramideData(data);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { apiPath } from '@/lib/api';
 import { 
   Users, 
   ChevronLeft, 
@@ -41,7 +42,7 @@ export default function PoblacionPage() {
     async function loadData() {
       try {
         setLoading(true);
-        const res = await fetch('/api/poblacion');
+        const res = await fetch(apiPath('/api/poblacion'));
         const json = await res.json();
         setMunicipios(json.data || []);
       } catch (err) {

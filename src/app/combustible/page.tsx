@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { Flame, ChevronLeft, BarChart2, Table as TableIcon, Loader2 } from 'lucide-react';
 import {
@@ -24,7 +25,7 @@ export default function CombustiblePage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/combustible');
+        const res = await fetch(apiPath('/api/combustible'));
         const json = await res.json();
         setData(json);
       } catch (err) {

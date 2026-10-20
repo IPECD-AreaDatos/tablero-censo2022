@@ -3,85 +3,143 @@ import { queryDwh, queryDatalake } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
+const pct = (value: number, decimals = 1) => value.toFixed(decimals).replace('.', ',');
+
 export async function GET() {
   try {
-    // 1. Demografía y Población desde DWH
-    const demoRows = await queryDwh(`
-      SELECT 
-        SUM(poblacion_2022)::bigint as total_poblacion,
-        SUM(poblacion_2022_varon_excluye_situacion_de_calle)::bigint as varones,
-        SUM(poblacion_2022_mujer_excluye_situacion_de_calle)::bigint as mujeres,
-        AVG(tasa_de_actividad)::numeric as tasa_actividad,
-        AVG(tasa_de_empleo)::numeric as tasa_empleo,
-        AVG(tasa_de_desocup)::numeric as tasa_desocup,
-        SUM(categoria_ocupacional_empleado_u_obrero)::bigint as empleados,
-        SUM(categoria_ocupacional_cuenta_propia)::bigint as cuenta_propia,
-        SUM("población_en_vivienda_obra_social_o_prepaga_incluye_pami")::bigint as obra_social,
-        SUM("población_en_viv_no_tiene_obra_social_prepaga_ni_plan_estatal")::bigint as sin_cobertura
-      FROM censo_ipecd_departamentos
-      WHERE LOWER(departamento) NOT LIKE '%total%'
-    `);
-
-    // 2. Hogares, Internet y Servicios desde Datalake
-    const [internetRows, nbiRows, inmatRows, aguaRows, combustibleRows] = await Promise.all([
-      queryDatalake(`SELECT SUM(total_viviendas)::bigint as total, SUM(con_internet)::bigint as con_net FROM base_internet`),
-      queryDatalake(`SELECT SUM(total_viviendas)::bigint as total, SUM(si_nbi_total)::bigint as nbi FROM base_nbi`),
-      queryDatalake(`SELECT SUM(total_viviendas)::bigint as total, SUM(calidad_1)::bigint as cal1 FROM base_inmat`),
-      queryDatalake(`SELECT SUM(total_vivienda)::bigint as total, SUM(red_publica)::bigint as red FROM base_agua_beber_o_cocinar`),
-      queryDatalake(`SELECT SUM(total_viviendas)::bigint as total, SUM(gas_garrafa)::bigint as garrafa FROM base_combustible_para_cocinar`),
+    const [demoRows, workRows, healthRows, internetRows, nbiRows, inmatRows, aguaRows, combustibleRows, climaRows] = await Promise.all([
+      queryDwh(`
+        SELECT
+          SUM(poblacion_2022)::bigint AS total_poblacion,
+          SUM(poblacion_2022 * poblacion_2022_varon_excluye_situacion_de_calle)
+            / NULLIF(SUM(poblacion_2022), 0) AS varones_pct,
+          SUM(poblacion_2022 * poblacion_2022_mujer_excluye_situacion_de_calle)
+            / NULLIF(SUM(poblacion_2022), 0) AS mujeres_pct
+        FROM censo_ipecd_departamentos
+        WHERE LOWER(departamento) NOT LIKE '%total%'
+      `),
+      queryDwh(`
+        SELECT
+          tasa_de_actividad::numeric AS actividad,
+          tasa_de_empleo::numeric AS empleo,
+          tasa_de_desocup::numeric AS desocupacion,
+          categoria_ocupacional_empleado_u_obrero::numeric AS empleados_obreros,
+          categoria_ocupacional_cuenta_propia::numeric AS cuenta_propia,
+          categoria_ocupacional_servicio_domestico::numeric AS servicio_domestico
+        FROM censo_ipecd_departamentos
+        WHERE LOWER(departamento) = 'total'
+        LIMIT 1
+      `),
+      queryDwh(`
+        SELECT
+          "obra_social_PAMI"::numeric AS con_cobertura,
+          "sin_cobertura"::numeric AS sin_cobertura,
+          "programas_estatales"::numeric AS programas_estatales
+        FROM censo_nea_nacion_cobertura_salud
+        WHERE LOWER(division_geo) = 'corrientes'
+        LIMIT 1
+      `),
+      queryDatalake(`
+        SELECT SUM(total_viviendas)::bigint AS total, SUM(con_internet)::bigint AS con_net
+        FROM base_internet
+      `),
+      queryDatalake(`
+        SELECT
+          SUM(total_viviendas)::bigint AS total,
+          SUM(si_nbi_total)::bigint AS nbi,
+          SUM(si_nbi_hacinamiento)::bigint AS hacinamiento
+        FROM base_nbi
+      `),
+      queryDatalake(`
+        SELECT SUM(total_viviendas)::bigint AS total, SUM(calidad_1)::bigint AS cal1
+        FROM base_inmat
+      `),
+      queryDatalake(`
+        SELECT
+          SUM(total_vivienda)::bigint AS total,
+          SUM(red_publica)::bigint AS red,
+          SUM(bomba_motor)::bigint AS bomba_motor,
+          SUM(bomba_manual + pozo_sin_bomba + cisterna_canal_acequia + otra)::bigint AS otras
+        FROM base_agua_beber_o_cocinar
+      `),
+      queryDatalake(`
+        SELECT SUM(total_viviendas)::bigint AS total, SUM(gas_garrafa)::bigint AS garrafa
+        FROM base_combustible_para_cocinar
+      `),
+      queryDatalake(`
+        SELECT SUM(total_viviendas)::bigint AS total, SUM(clima_medio)::bigint AS medio
+        FROM base_clima_educativo_hogar
+      `),
     ]);
 
     const d = demoRows[0] || {};
-    const pop = Number(d.total_poblacion) || 1209671;
-    const varones = Number(d.varones) || 586788;
-    const mujeres = Number(d.mujeres) || 622883;
+    const w = workRows[0] || {};
+    const s = healthRows[0] || {};
+    const pop = Number(d.total_poblacion) || 0;
+    const varonesPct = Number(d.varones_pct) || 0;
+    const mujeresPct = Number(d.mujeres_pct) || 0;
     const totalHogares = 379129;
 
-    const netTotal = Number(internetRows[0]?.total) || 1;
-    const netCon = Number(internetRows[0]?.con_net) || 0;
+    const internet = internetRows[0] || {};
+    const netTotal = Number(internet.total) || 0;
+    const netCon = Number(internet.con_net) || 0;
 
-    const nbiTotal = Number(nbiRows[0]?.total) || 1;
-    const nbiCon = Number(nbiRows[0]?.nbi) || 0;
+    const nbi = nbiRows[0] || {};
+    const nbiTotal = Number(nbi.total) || 0;
+    const nbiCon = Number(nbi.nbi) || 0;
+    const nbiHacinamiento = Number(nbi.hacinamiento) || 0;
 
-    const inmatTotal = Number(inmatRows[0]?.total) || 1;
-    const inmatCal1 = Number(inmatRows[0]?.cal1) || 0;
+    const inmat = inmatRows[0] || {};
+    const inmatTotal = Number(inmat.total) || 0;
+    const inmatCal1 = Number(inmat.cal1) || 0;
 
-    const aguaTotal = Number(aguaRows[0]?.total) || 1;
-    const aguaRed = Number(aguaRows[0]?.red) || 0;
+    const agua = aguaRows[0] || {};
+    const aguaTotal = Number(agua.total) || 0;
+    const aguaRed = Number(agua.red) || 0;
+    const aguaBombaMotor = Number(agua.bomba_motor) || 0;
+    const aguaOtras = Number(agua.otras) || 0;
 
-    const gasTotal = Number(combustibleRows[0]?.total) || 1;
-    const gasGarr = Number(combustibleRows[0]?.garrafa) || 0;
+    const combustible = combustibleRows[0] || {};
+    const gasTotal = Number(combustible.total) || 0;
+    const gasGarrafa = Number(combustible.garrafa) || 0;
 
     return NextResponse.json({
       demografia: {
         totalPoblacion: pop.toLocaleString('es-AR'),
-        varonesPct: ((varones / pop) * 100).toFixed(1).replace('.', ','),
-        mujeresPct: ((mujeres / pop) * 100).toFixed(1).replace('.', ','),
-        indiceMasculinidad: mujeres > 0 ? ((varones / mujeres) * 100).toFixed(1).replace('.', ',') : '94,2',
+        varonesPct: pct(varonesPct),
+        mujeresPct: pct(mujeresPct),
+        indiceMasculinidad: mujeresPct > 0 ? pct((varonesPct / mujeresPct) * 100) : '—',
         totalHogares: totalHogares.toLocaleString('es-AR'),
-        personasPorHogar: (pop / totalHogares).toFixed(2).replace('.', ','),
+        personasPorHogar: pct(pop / totalHogares, 2),
       },
       trabajo: {
-        actividad: '55,3 %',
-        empleo: '51,0 %',
-        desocupacion: '7,9 %',
-        empleadosObreros: Number(d.empleados || 0).toLocaleString('es-AR'),
-        cuentaPropia: Number(d.cuenta_propia || 0).toLocaleString('es-AR'),
+        actividad: `${pct(Number(w.actividad) || 0)} %`,
+        empleo: `${pct(Number(w.empleo) || 0)} %`,
+        desocupacion: `${pct(Number(w.desocupacion) || 0)} %`,
+        empleadosObrerosPct: pct(Number(w.empleados_obreros) || 0),
+        cuentaPropiaPct: pct(Number(w.cuenta_propia) || 0),
+        servicioDomesticoPct: pct(Number(w.servicio_domestico) || 0),
       },
       educacionSalud: {
         secundariaCompleta: '31,3 %',
         secundariaPais: '34,7 %',
         secundariaNea: '29,6 %',
-        conObraSocial: pop > 0 ? (((Number(d.obra_social) || 0) / pop) * 100).toFixed(1).replace('.', ',') : '51,2',
-        sinCobertura: pop > 0 ? (((Number(d.sin_cobertura) || 0) / pop) * 100).toFixed(1).replace('.', ',') : '42,8',
+        conObraSocial: pct((Number(s.con_cobertura) || 0) * 100),
+        sinCobertura: pct((Number(s.sin_cobertura) || 0) * 100),
+        programasEstatales: pct((Number(s.programas_estatales) || 0) * 100),
+        hogaresClimaMedio: Number(climaRows[0]?.medio || 0).toLocaleString('es-AR'),
       },
       habitat: {
-        nbiPct: ((nbiCon / nbiTotal) * 100).toFixed(1).replace('.', ','),
-        inmatCal1Pct: ((inmatCal1 / inmatTotal) * 100).toFixed(1).replace('.', ','),
-        internetPct: ((netCon / netTotal) * 100).toFixed(1).replace('.', ','),
-        aguaRedPct: ((aguaRed / aguaTotal) * 100).toFixed(1).replace('.', ','),
-        gasGarrafaPct: ((gasGarr / gasTotal) * 100).toFixed(1).replace('.', ','),
-      }
+        nbiPct: nbiTotal > 0 ? pct((nbiCon / nbiTotal) * 100) : '—',
+        hacinamientoPct: nbiTotal > 0 ? pct((nbiHacinamiento / nbiTotal) * 100) : '—',
+        inmatCal1Pct: inmatTotal > 0 ? pct((inmatCal1 / inmatTotal) * 100) : '—',
+        internetPct: netTotal > 0 ? pct((netCon / netTotal) * 100) : '—',
+        sinInternetPct: netTotal > 0 ? pct(((netTotal - netCon) / netTotal) * 100) : '—',
+        aguaRedPct: aguaTotal > 0 ? pct((aguaRed / aguaTotal) * 100) : '—',
+        aguaBombaMotorPct: aguaTotal > 0 ? pct((aguaBombaMotor / aguaTotal) * 100) : '—',
+        aguaOtrasFuentesPct: aguaTotal > 0 ? pct((aguaOtras / aguaTotal) * 100) : '—',
+        gasGarrafaPct: gasTotal > 0 ? pct((gasGarrafa / gasTotal) * 100) : '—',
+      },
     });
   } catch (error) {
     console.error('Error al generar resumen:', error);

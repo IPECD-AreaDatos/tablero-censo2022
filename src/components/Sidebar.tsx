@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
+import { assetPath } from '@/lib/api';
 import { 
   Users, 
   Home, 
@@ -49,16 +50,16 @@ const menuItems = [
   }
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
 
   return (
-    <aside className="sidebar">
+      <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`} id="dashboard-sidebar">
       {/* Header con logo blanco */}
       <div className="sidebar-header">
         <div className="sidebar-logo-container">
           <Image
-            src="/logo_pluma_blanca.png"
+            src={assetPath('/logo_pluma_blanca.png')}
             alt="IPECD - IMI"
             width={170}
             height={55}
@@ -73,7 +74,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navegación por grupos */}
-      <nav className="sidebar-nav">
+      <nav className="sidebar-nav" aria-label="Secciones del tablero">
         {menuItems.map((group, idx) => (
           <div key={idx}>
             <p className="nav-group-title">{group.category}</p>
@@ -86,10 +87,11 @@ export default function Sidebar() {
                     key={item.href}
                     href={item.href}
                     className={`sidebar-link ${isActive ? 'active' : ''}`}
+                    title={collapsed ? item.name : undefined}
                   >
                     <div className="sidebar-link-content">
                       <Icon className="sidebar-link-icon" />
-                      <span>{item.name}</span>
+                      <span className="sidebar-link-label">{item.name}</span>
                     </div>
                     {isActive && <ChevronRight className="sidebar-link-arrow" />}
                   </Link>
@@ -99,6 +101,6 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
-    </aside>
+      </aside>
   );
 }

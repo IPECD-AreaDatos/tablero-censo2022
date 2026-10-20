@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { Building2, ChevronLeft, BarChart2, Table as TableIcon, Loader2, Award } from 'lucide-react';
 import {
@@ -28,7 +29,7 @@ export default function ActividadEconomicaPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/actividad-economica');
+        const res = await fetch(apiPath('/api/actividad-economica'));
         const json = await res.json();
         setData(json);
       } catch (err) {

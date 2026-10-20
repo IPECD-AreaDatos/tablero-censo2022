@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { GraduationCap, ChevronLeft, BarChart2, Table as TableIcon, Loader2 } from 'lucide-react';
 import {
@@ -21,7 +22,7 @@ export default function EducacionPage() {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch('/api/educacion');
+        const res = await fetch(apiPath('/api/educacion'));
         const json = await res.json();
         setData(json);
       } catch (err) {

@@ -1,4 +1,5 @@
 import Image from 'next/image';
+import { assetPath } from '@/lib/api';
 
 export default function Footer() {
   return (
@@ -6,7 +7,7 @@ export default function Footer() {
       <div className="footer-content">
         <div className="footer-logos">
           <Image
-            src="/LOGO-Negro (IMI+Gob+Gerencia)_1.png"
+            src={assetPath('/logo_imi_gobierno.png')}
             alt="Instituto de Modernización e Innovación Corrientes"
             width={260}
             height={50}
