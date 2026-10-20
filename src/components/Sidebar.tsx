@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { 
   Users, 
@@ -13,19 +14,19 @@ import {
   Wifi, 
   Layers, 
   BarChart3,
-  Building2
+  Building2,
+  ChevronRight
 } from 'lucide-react';
-import { clsx } from 'clsx';
 
 const menuItems = [
   {
-    category: 'General',
+    category: 'GENERAL',
     items: [
-      { name: 'Portada / Resumen', href: '/', icon: BarChart3 },
+      { name: 'Resumen Principal', href: '/', icon: BarChart3 },
     ]
   },
   {
-    category: 'Indicadores Individuales',
+    category: 'INDICADORES INDIVIDUALES',
     items: [
       { name: 'Población y Municipios', href: '/poblacion', icon: Users },
       { name: 'Pirámide Poblacional', href: '/piramide', icon: Layers },
@@ -36,10 +37,10 @@ const menuItems = [
     ]
   },
   {
-    category: 'Indicadores por Hogar',
+    category: 'INDICADORES POR HOGAR',
     items: [
       { name: 'Clima Educativo Hogar', href: '/clima-educativo', icon: GraduationCap },
-      { name: 'NBI (Necesidades Básicas)', href: '/nbi', icon: Home },
+      { name: 'NBI (Básicas Insatisfechas)', href: '/nbi', icon: Home },
       { name: 'Materiales Vivienda (INMAT)', href: '/inmat', icon: Home },
       { name: 'Agua para Beber/Cocinar', href: '/agua', icon: Droplets },
       { name: 'Combustible p/ Cocinar', href: '/combustible', icon: Flame },
@@ -52,26 +53,31 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 bg-slate-900 text-slate-100 min-h-screen flex flex-col border-r border-slate-800 shrink-0">
-      {/* Encabezado Institucional */}
-      <div className="p-5 border-b border-slate-800 flex items-center space-x-3">
-        <div className="w-9 h-9 rounded-lg bg-emerald-600 flex items-center justify-center font-bold text-white shadow-md">
-          C22
+    <aside className="sidebar">
+      {/* Header con logo blanco */}
+      <div className="sidebar-header">
+        <div className="sidebar-logo-container">
+          <Image
+            src="/logo_pluma_blanca.png"
+            alt="IPECD - IMI"
+            width={170}
+            height={55}
+            className="sidebar-logo-img"
+            priority
+          />
         </div>
-        <div>
-          <h1 className="text-sm font-semibold tracking-wide text-white leading-tight">IPECD Corrientes</h1>
-          <p className="text-xs text-slate-400">Censo 2022 Digital</p>
+        <div className="sidebar-title-group">
+          <h1 className="sidebar-title">Censo 2022</h1>
+          <p className="sidebar-subtitle">Provincia de Corrientes</p>
         </div>
       </div>
 
-      {/* Navegación */}
-      <nav className="flex-1 p-4 space-y-6 overflow-y-auto">
+      {/* Navegación por grupos */}
+      <nav className="sidebar-nav">
         {menuItems.map((group, idx) => (
           <div key={idx}>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 px-3">
-              {group.category}
-            </p>
-            <div className="space-y-1">
+            <p className="nav-group-title">{group.category}</p>
+            <div className="nav-group-items">
               {group.items.map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.href;
@@ -79,15 +85,13 @@ export default function Sidebar() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={clsx(
-                      'flex items-center space-x-3 px-3 py-2 text-xs font-medium rounded-lg transition-colors',
-                      isActive
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                    )}
+                    className={`sidebar-link ${isActive ? 'active' : ''}`}
                   >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{item.name}</span>
+                    <div className="sidebar-link-content">
+                      <Icon className="sidebar-link-icon" />
+                      <span>{item.name}</span>
+                    </div>
+                    {isActive && <ChevronRight className="sidebar-link-arrow" />}
                   </Link>
                 );
               })}
@@ -95,11 +99,6 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
-
-      {/* Pie institucional */}
-      <div className="p-4 border-t border-slate-800 text-[11px] text-slate-500">
-        Fuente: IPECD en base a Censo 2022
-      </div>
     </aside>
   );
 }
