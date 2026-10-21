@@ -84,7 +84,7 @@ export default function HomePage() {
                 <Users className="w-4 h-4 text-emerald-400" />
                 <span>Población y Demografía</span>
               </div>
-              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>3 bloques</span>
+              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}></span>
             </div>
             <div className="cardBody">
               {/* Fila 1: Total y Densidad */}
@@ -174,7 +174,7 @@ export default function HomePage() {
                 <Briefcase className="w-4 h-4 text-emerald-400" />
                 <span>Mercado de Trabajo y Empleo</span>
               </div>
-              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>3 bloques</span>
+              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}></span>
             </div>
             <div className="cardBody">
               {/* Fila 1: Tasas de Actividad y Empleo */}
@@ -264,7 +264,7 @@ export default function HomePage() {
                 <GraduationCap className="w-4 h-4 text-emerald-400" />
                 <span>Educación y Cobertura de Salud</span>
               </div>
-              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>3 bloques</span>
+              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}></span>
             </div>
             <div className="cardBody">
               {/* Fila 1: Secundaria Completa */}
@@ -354,7 +354,7 @@ export default function HomePage() {
                 <Home className="w-4 h-4 text-emerald-400" />
                 <span>Condiciones de la Vivienda y Servicios</span>
               </div>
-              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>3 bloques</span>
+              <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}></span>
             </div>
             <div className="cardBody">
               {/* Fila 1: NBI y Calidad de Materiales */}

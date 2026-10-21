@@ -27,7 +27,7 @@ export default function AppShell({ children, footer }: { children: ReactNode; fo
         <div className="dashboard-brandbar">
           <div className="dashboard-brand">
             <Image
-              src={assetPath('/logo_pluma_blanca.png')}
+              src={assetPath('/logo_pluma_negra.png')}
               alt="Instituto de Modernización e Innovación — Corrientes"
               width={170}
               height={55}

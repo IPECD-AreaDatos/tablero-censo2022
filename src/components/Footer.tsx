@@ -15,7 +15,7 @@ export default function Footer() {
           />
         </div>
         <p className="footer-text">
-          © 2026 - Gobierno de la Provincia de Corrientes - IMI / IPECD
+          © 2026 - Gobierno de la Provincia de Corrientes - IMI 
         </p>
       </div>
     </footer>
