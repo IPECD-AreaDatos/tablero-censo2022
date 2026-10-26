@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { Briefcase, ChevronLeft, Table as TableIcon, BarChart2, Loader2 } from 'lucide-react';
+import { 
+  Briefcase, 
+  ChevronLeft, 
+  BarChart2, 
+  Table as TableIcon, 
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -11,26 +20,21 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
 } from 'recharts';
 
-interface DeptoTrabajo {
-  departamento: string;
-  poblacion: number;
-  actividad: number;
-  empleo: number;
-  desocupacion: number;
-  empleado_obrero: number;
-  cuenta_propia: number;
-  patron_empleador: number;
-  servicio_domestico: number;
-}
+type IndicadorTrabajo = 'actividad' | 'empleo' | 'desocupacion';
+type SortField = 'departamento' | 'actividad' | 'empleo' | 'desocupacion' | 'empleado_obrero' | 'cuenta_propia';
+type SortOrder = 'asc' | 'desc';
 
 export default function MercadoTrabajoPage() {
-  const [data, setData] = useState<DeptoTrabajo[]>([]);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [metricKey, setMetricKey] = useState<'actividad' | 'empleo' | 'desocupacion'>('actividad');
+  const [selectedIndicador, setSelectedIndicador] = useState<IndicadorTrabajo>('actividad');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+
+  // Estados de ordenamiento exclusivos de la tabla
+  const [sortField, setSortField] = useState<SortField>('actividad');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
@@ -38,9 +42,9 @@ export default function MercadoTrabajoPage() {
         setLoading(true);
         const res = await fetch(apiPath('/api/mercado-trabajo'));
         const json = await res.json();
-        setData(json.departamentos || []);
-      } catch (e) {
-        console.error(e);
+        setData(json);
+      } catch (err) {
+        console.error(err);
       } finally {
         setLoading(false);
       }
@@ -48,11 +52,79 @@ export default function MercadoTrabajoPage() {
     load();
   }, []);
 
-  const metricTitle = {
+  const deptosOriginal = data?.departamentos || [];
+  const totales = data?.totalesProvincia;
+
+  const labelsIndicador: Record<IndicadorTrabajo, string> = {
     actividad: 'Tasa de Actividad (%)',
     empleo: 'Tasa de Empleo (%)',
     desocupacion: 'Tasa de Desocupación (%)',
-  }[metricKey];
+  };
+
+  // Datos fijos para el gráfico: siempre ordenados de mayor a menor por el indicador seleccionado
+  const datosGrafico = useMemo(() => {
+    if (!deptosOriginal.length) return [];
+    return [...deptosOriginal]
+      .sort((a: any, b: any) => (Number(b[selectedIndicador]) || 0) - (Number(a[selectedIndicador]) || 0));
+  }, [deptosOriginal, selectedIndicador]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
+          <ArrowUpDown size={12} color="#94a3b8" />
+        </span>
+      );
+    }
+    return sortOrder === 'asc' ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    );
+  };
+
+  // Datos ordenados exclusivamente para la tabla
+  const deptosTablaOrdenados = useMemo(() => {
+    if (!deptosOriginal.length) return [];
+    return [...deptosOriginal].sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'departamento') {
+        aVal = (a.departamento || '').toLowerCase();
+        bVal = (b.departamento || '').toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      aVal = Number(a[sortField]) || 0;
+      bVal = Number(b[sortField]) || 0;
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [deptosOriginal, sortField, sortOrder]);
+
+  const getColorIndicador = (ind: IndicadorTrabajo) => {
+    switch (ind) {
+      case 'actividad':
+        return '#047857';
+      case 'empleo':
+        return '#2563eb';
+      case 'desocupacion':
+        return '#dc2626';
+    }
+  };
 
   return (
     <div className="container">
@@ -69,26 +141,34 @@ export default function MercadoTrabajoPage() {
         </div>
       </div>
 
-      {/* Tarjetas KPI Provinciales */}
+      {/* Tarjetas KPI Superiores dinámicas */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #1e3a8a' }}>
-          <span className="metricLabel">Tasa de Actividad Provincial</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>55,3 %</span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
-        </div>
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Tasa de Empleo Provincial</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>51,0 %</span>
+          <span className="metricLabel">Tasa de Actividad Provincial</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+            {totales?.actividad || '...'}
+          </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
         </div>
+
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
+          <span className="metricLabel">Tasa de Empleo Provincial</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+            {totales?.empleo || '...'}
+          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
+        </div>
+
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
           <span className="metricLabel">Tasa de Desocupación Provincial</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>7,9 %</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
+            {totales?.desocupacion || '...'}
+          </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
         </div>
       </div>
 
-      {/* Selector de Indicador de Tasa */}
+      {/* Selector de Indicador */}
       <div
         style={{
           display: 'flex',
@@ -104,34 +184,33 @@ export default function MercadoTrabajoPage() {
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
           INDICADOR A VISUALIZAR:
         </span>
-        {(['actividad', 'empleo', 'desocupacion'] as const).map((key) => (
+        {(['actividad', 'empleo', 'desocupacion'] as IndicadorTrabajo[]).map((ind) => (
           <button
-            key={key}
-            onClick={() => setMetricKey(key)}
+            key={ind}
+            onClick={() => setSelectedIndicador(ind)}
             style={{
               border: '1px solid',
-              borderColor: metricKey === key ? '#10b981' : '#cbd5e1',
-              backgroundColor: metricKey === key ? '#14203b' : '#f8fafc',
-              color: metricKey === key ? '#ffffff' : '#334155',
+              borderColor: selectedIndicador === ind ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedIndicador === ind ? '#14203b' : '#f8fafc',
+              color: selectedIndicador === ind ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
               fontSize: '0.82rem',
-              fontWeight: metricKey === key ? 700 : 500,
+              fontWeight: selectedIndicador === ind ? 700 : 500,
               cursor: 'pointer',
-              textTransform: 'capitalize',
             }}
           >
-            Tasa de {key}
+            {labelsIndicador[ind].replace(' (%)', '')}
           </button>
         ))}
       </div>
 
-      {/* Contenedor Gráfico / Tabla */}
+      {/* Gráfico / Tabla */}
       <div className="card" style={{ marginTop: 12 }}>
         <div className="cardHeader">
           <div className="cardTitle">
             <Briefcase className="w-4 h-4 text-emerald-400" />
-            <span>{metricTitle} por Departamento</span>
+            <span>{labelsIndicador[selectedIndicador]} por Departamento</span>
           </div>
 
           <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -180,76 +259,179 @@ export default function MercadoTrabajoPage() {
           {loading ? (
             <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
               <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Cargando datos de mercado laboral...</span>
+              <span>Calculando mercado de trabajo...</span>
             </div>
           ) : viewMode === 'grafico' ? (
             <div style={{ width: '100%', height: 600 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   layout="vertical"
-                  data={data}
-                  margin={{ top: 10, right: 30, left: 40, bottom: 20 }}
+                  data={datosGrafico}
+                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
                 >
                   <XAxis
                     type="number"
-                    unit="%"
+                    tickFormatter={(v) => `${v}%`}
                     stroke="#94a3b8"
                     fontSize={11}
+                    label={{
+                      value: labelsIndicador[selectedIndicador],
+                      position: 'insideBottom',
+                      offset: -18,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
                   />
                   <YAxis
                     type="category"
                     dataKey="departamento"
-                    width={130}
+                    width={140}
                     stroke="#475569"
                     fontSize={11}
                     tickLine={false}
+                    label={{
+                      value: 'Departamento',
+                      angle: -90,
+                      position: 'insideLeft',
+                      offset: -10,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      style: { textAnchor: 'middle' },
+                    }}
                   />
                   <Tooltip
-                    formatter={(val: any) => [`${Number(val).toFixed(1).replace('.', ',')} %`, metricTitle]}
+                    formatter={(val: any) => [`${Number(val).toFixed(1).replace('.', ',')} %`, labelsIndicador[selectedIndicador].replace(' (%)', '')]}
                     contentStyle={{
                       backgroundColor: '#0f172a',
                       borderRadius: 8,
-                      border: 'none',
+                      border: '1px solid #334155',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{
                       color: '#ffffff',
-                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: '0.8rem',
+                    }}
+                    itemStyle={{
+                      color: '#34d399',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
                     }}
                   />
-                  <Bar 
-                    dataKey={metricKey} 
-                    fill={metricKey === 'desocupacion' ? '#dc2626' : '#059669'} 
-                    radius={[0, 4, 4, 0]} 
+                  <Bar
+                    dataKey={selectedIndicador}
+                    fill={getColorIndicador(selectedIndicador)}
+                    radius={[0, 4, 4, 0]}
                   />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                maxHeight: '480px',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#ffffff',
+                    zIndex: 2,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}
+                >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Departamento</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Tasa Actividad</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Tasa Empleo</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Tasa Desocupación</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Empleados / Obreros</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Cuenta Propia</th>
+                    <th 
+                      onClick={() => handleSort('departamento')}
+                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span>Departamento</span>
+                        {renderSortIcon('departamento')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('actividad')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Tasa Actividad</span>
+                        {renderSortIcon('actividad')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('empleo')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Tasa Empleo</span>
+                        {renderSortIcon('empleo')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('desocupacion')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Tasa Desocupación</span>
+                        {renderSortIcon('desocupacion')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('empleado_obrero')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Empleados / Obreros</span>
+                        {renderSortIcon('empleado_obrero')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('cuenta_propia')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Cuenta Propia</span>
+                        {renderSortIcon('cuenta_propia')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((row, idx) => (
+                  {deptosTablaOrdenados.map((row: any, idx: number) => (
                     <tr
-                      key={row.departamento}
+                      key={row.departamento || idx}
                       style={{
                         borderBottom: '1px solid #f1f5f9',
                         backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
                       }}
                     >
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{row.departamento}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{row.actividad.toFixed(1).replace('.', ',')} %</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#047857', fontWeight: 600 }}>{row.empleo.toFixed(1).replace('.', ',')} %</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#b91c1c', fontWeight: 600 }}>{row.desocupacion.toFixed(1).replace('.', ',')} %</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.empleado_obrero.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.cuenta_propia.toLocaleString('es-AR')}</td>
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.departamento}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'actividad' ? 700 : 500, color: selectedIndicador === 'actividad' ? '#047857' : 'inherit' }}>
+                        {row.actividad.toFixed(1).replace('.', ',')} %
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'empleo' ? 700 : 500, color: selectedIndicador === 'empleo' ? '#2563eb' : 'inherit' }}>
+                        {row.empleo.toFixed(1).replace('.', ',')} %
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'desocupacion' ? 700 : 500, color: selectedIndicador === 'desocupacion' ? '#dc2626' : 'inherit' }}>
+                        {row.desocupacion.toFixed(1).replace('.', ',')} %
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
+                        {row.empleado_obrero.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
+                        {row.cuenta_propia.toLocaleString('es-AR')}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

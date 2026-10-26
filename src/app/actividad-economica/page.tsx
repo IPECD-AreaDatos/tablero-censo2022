@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { Building2, ChevronLeft, BarChart2, Table as TableIcon, Loader2, Award } from 'lucide-react';
+import { 
+  Building2, 
+  ChevronLeft, 
+  BarChart2, 
+  Table as TableIcon, 
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,17 +22,17 @@ import {
   Tooltip,
 } from 'recharts';
 
-interface SectorItem {
-  sector: string;
-  valor: number;
-  porcentaje: string;
-  color: string;
-}
+type SortField = 'sector' | 'valor' | 'pct';
+type SortOrder = 'asc' | 'desc';
 
 export default function ActividadEconomicaPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+
+  // Estados de ordenamiento exclusivos de la tabla
+  const [sortField, setSortField] = useState<SortField>('valor');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
@@ -41,9 +50,68 @@ export default function ActividadEconomicaPage() {
     load();
   }, []);
 
-  const sectores: SectorItem[] = data?.sectores || [];
-  const totalOcupados: number = data?.totalOcupados || 0;
-  const topSector: SectorItem = data?.topSector;
+  const totalPoblacion = data?.totalPoblacion || 0;
+  const principalSector = data?.principalSector;
+  const pctComercioIndustria = data?.pctComercioIndustria || '0,0';
+  const sectoresOriginal = data?.sectores || [];
+
+  // Datos fijos para el gráfico: siempre ordenados de mayor a menor
+  const datosGrafico = useMemo(() => {
+    return [...sectoresOriginal].sort((a: any, b: any) => (Number(b.valor) || 0) - (Number(a.valor) || 0));
+  }, [sectoresOriginal]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
+          <ArrowUpDown size={12} color="#94a3b8" />
+        </span>
+      );
+    }
+    return sortOrder === 'asc' ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    );
+  };
+
+  // Datos ordenados exclusivamente para la tabla
+  const detalleTablaOrdenado = useMemo(() => {
+    if (!sectoresOriginal.length) return [];
+    return [...sectoresOriginal].sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'sector') {
+        aVal = (a.sector || '').toLowerCase();
+        bVal = (b.sector || '').toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      if (sortField === 'valor') {
+        aVal = Number(a.valor) || 0;
+        bVal = Number(b.valor) || 0;
+      } else if (sortField === 'pct') {
+        aVal = parseFloat(String(a.pct).replace(',', '.')) || 0;
+        bVal = parseFloat(String(b.pct).replace(',', '.')) || 0;
+      }
+
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [sectoresOriginal, sortField, sortOrder]);
 
   return (
     <div className="container">
@@ -65,31 +133,25 @@ export default function ActividadEconomicaPage() {
         <div className="card" style={{ padding: '14px 18px' }}>
           <span className="metricLabel">Población Ocupada Total Relevada</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {totalOcupados.toLocaleString('es-AR')}
+            {totalPoblacion ? totalPoblacion.toLocaleString('es-AR') : '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincial Calculado</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #1e3a8a' }}>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
           <span className="metricLabel">Principal Rama de Empleo</span>
-          <span className="metricVal" style={{ fontSize: '1.2rem', marginTop: 4, color: '#1e3a8a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {topSector ? topSector.sector : '...'}
+          <span className="metricVal" style={{ fontSize: '1.25rem', marginTop: 4, color: '#1d4ed8' }}>
+            {principalSector?.sector || '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {topSector ? `${topSector.valor.toLocaleString('es-AR')} personas (${topSector.porcentaje} %)` : ''}
+            {principalSector ? `${principalSector.valor.toLocaleString('es-AR')} personas (${principalSector.pct} %)` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
           <span className="metricLabel">Comercio e Industria Combinados</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {sectores.length > 0 
-              ? (
-                  ((((sectores.find(s => s.sector.includes('Comercio'))?.valor || 0) + 
-                    (sectores.find(s => s.sector.includes('Industria'))?.valor || 0)) / (totalOcupados || 1)) * 100
-                  ).toFixed(1).replace('.', ',') + ' %'
-                )
-              : '...'}
+            {pctComercioIndustria} %
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Participación en el empleo provincial</span>
         </div>
@@ -149,38 +211,142 @@ export default function ActividadEconomicaPage() {
           {loading ? (
             <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
               <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando ramas de actividad...</span>
+              <span>Calculando actividad económica...</span>
             </div>
           ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 550 }}>
+            <div style={{ width: '100%', height: 600 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={sectores} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
-                  <XAxis type="number" tickFormatter={(v) => Number(v).toLocaleString('es-AR')} stroke="#94a3b8" fontSize={11} />
-                  <YAxis type="category" dataKey="sector" width={220} stroke="#475569" fontSize={10} tickLine={false} />
+                <BarChart
+                  layout="vertical"
+                  data={datosGrafico}
+                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                >
+                  <XAxis
+                    type="number"
+                    tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    label={{
+                      value: 'Población Ocupada (cantidad de personas)',
+                      position: 'insideBottom',
+                      offset: -18,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="sector"
+                    width={220}
+                    stroke="#475569"
+                    fontSize={10}
+                    tickLine={false}
+                    label={{
+                      value: 'Rama de Actividad Económica',
+                      angle: -90,
+                      position: 'insideLeft',
+                      offset: -10,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      style: { textAnchor: 'middle' },
+                    }}
+                  />
                   <Tooltip
-                    formatter={(val: any) => [Number(val).toLocaleString('es-AR') + ' ocupados', 'Población']}
-                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: 'none', color: '#ffffff', fontSize: '0.78rem' }}
+                    formatter={(val: any) => [
+                      `${Number(val).toLocaleString('es-AR')} ocupados`,
+                      'Población',
+                    ]}
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: 8,
+                      border: '1px solid #334155',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{
+                      color: '#ffffff',
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: '0.8rem',
+                    }}
+                    itemStyle={{
+                      color: '#34d399',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                    }}
                   />
                   <Bar dataKey="valor" fill="#14203b" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                maxHeight: '480px',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#ffffff',
+                    zIndex: 2,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}
+                >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Rama de Actividad Económica</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Población Ocupada</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Participación (%)</th>
+                    <th 
+                      onClick={() => handleSort('sector')}
+                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span>Rama de Actividad</span>
+                        {renderSortIcon('sector')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('valor')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Población Ocupada</span>
+                        {renderSortIcon('valor')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('pct')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Participación</span>
+                        {renderSortIcon('pct')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sectores.map((row, idx) => (
-                    <tr key={row.sector} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600, color: '#1e293b' }}>{row.sector}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>{row.valor.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#047857', fontWeight: 600 }}>{row.porcentaje} %</td>
+                  {detalleTablaOrdenado.map((row: any, idx: number) => (
+                    <tr
+                      key={row.sector || idx}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                      }}
+                    >
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.sector}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#14203b' }}>
+                        {Number(row.valor).toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#047857' }}>
+                        {row.pct} %
+                      </td>
                     </tr>
                   ))}
                 </tbody>

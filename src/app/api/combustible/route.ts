@@ -18,29 +18,28 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_combustible
     `);
 
-    // 2. Detalle territorial desde base_combustible_para_cocinar en datalake
+    // 2. Detalle territorial consolidado por municipio/departamento
     let rowsDetalle: any[] = [];
     try {
       rowsDetalle = await queryDatalake(`
         SELECT 
-          b.codigo,
-          COALESCE(p.municipio_p1, p.depto_p18, CONCAT('Área ', b.codigo)) as nombre,
-          b.total_viviendas::bigint as total_viviendas,
-          b.gas_garrafa::bigint as gas_garrafa,
-          b.gas_tubo_o_zepelin::bigint as gas_tubo,
-          b.gas_red::bigint as gas_red,
-          b.electricidad::bigint as electricidad,
-          b.leña_carbon::bigint as lena_carbon,
-          b.otro::bigint as otro
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+          SUM(b.total_viviendas)::bigint as total_viviendas,
+          SUM(b.gas_garrafa)::bigint as gas_garrafa,
+          SUM(b.gas_tubo_o_zepelin)::bigint as gas_tubo,
+          SUM(b.gas_red)::bigint as gas_red,
+          SUM(b.electricidad)::bigint as electricidad,
+          SUM(b.leña_carbon)::bigint as lena_carbon,
+          SUM(b.otro)::bigint as otro
         FROM base_combustible_para_cocinar b
-        LEFT JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        ORDER BY b.total_viviendas DESC
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+        ORDER BY total_viviendas DESC
       `);
     } catch (e) {
-      console.warn('Fallback en join combustible:', e);
+      console.warn('Fallback en query agrupada de combustible:', e);
       rowsDetalle = await queryDatalake(`
         SELECT 
-          codigo,
           CONCAT('Área ', codigo) as nombre,
           total_viviendas::bigint as total_viviendas,
           gas_garrafa::bigint as gas_garrafa,
@@ -51,6 +50,7 @@ export async function GET(request: NextRequest) {
           otro::bigint as otro
         FROM base_combustible_para_cocinar
         ORDER BY total_viviendas DESC
+        LIMIT 30
       `);
     }
 
@@ -85,7 +85,6 @@ export async function GET(request: NextRequest) {
         const el = Number(r.electricidad) || 0;
         const lc = Number(r.lena_carbon) || 0;
         return {
-          codigo: r.codigo,
           nombre: r.nombre,
           total_viviendas: tot,
           gas_garrafa: gg,

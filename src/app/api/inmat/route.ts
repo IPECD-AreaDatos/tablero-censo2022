@@ -17,28 +17,27 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_inmat
     `);
 
-    // 2. Detalle territorial desde base_inmat en datalake
+    // 2. Detalle territorial consolidado por municipio/departamento
     let rowsDetalle: any[] = [];
     try {
       rowsDetalle = await queryDatalake(`
         SELECT 
-          b.codigo,
-          COALESCE(p.municipio_p1, p.depto_p18, CONCAT('Área ', b.codigo)) as nombre,
-          b.total_viviendas::bigint as total_viviendas,
-          b.calidad_1::bigint as calidad_1,
-          b.calidad_2::bigint as calidad_2,
-          b.calidad_3::bigint as calidad_3,
-          b.calidad_4::bigint as calidad_4,
-          b.ignorado::bigint as ignorado
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+          SUM(b.total_viviendas)::bigint as total_viviendas,
+          SUM(b.calidad_1)::bigint as calidad_1,
+          SUM(b.calidad_2)::bigint as calidad_2,
+          SUM(b.calidad_3)::bigint as calidad_3,
+          SUM(b.calidad_4)::bigint as calidad_4,
+          SUM(b.ignorado)::bigint as ignorado
         FROM base_inmat b
-        LEFT JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        ORDER BY b.total_viviendas DESC
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+        ORDER BY total_viviendas DESC
       `);
     } catch (e) {
-      console.warn('Fallback en join INMAT:', e);
+      console.warn('Fallback en query agrupada de INMAT:', e);
       rowsDetalle = await queryDatalake(`
         SELECT 
-          codigo,
           CONCAT('Área ', codigo) as nombre,
           total_viviendas::bigint as total_viviendas,
           calidad_1::bigint as calidad_1,
@@ -48,6 +47,7 @@ export async function GET(request: NextRequest) {
           ignorado::bigint as ignorado
         FROM base_inmat
         ORDER BY total_viviendas DESC
+        LIMIT 30
       `);
     }
 
@@ -82,7 +82,6 @@ export async function GET(request: NextRequest) {
         const c3 = Number(r.calidad_3) || 0;
         const c4 = Number(r.calidad_4) || 0;
         return {
-          codigo: r.codigo,
           nombre: r.nombre,
           total_viviendas: tot,
           calidad_1: c1,

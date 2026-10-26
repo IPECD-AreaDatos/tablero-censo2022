@@ -7,7 +7,19 @@ const pct = (value: number, decimals = 1) => value.toFixed(decimals).replace('.'
 
 export async function GET() {
   try {
-    const [demoRows, workRows, healthRows, internetRows, nbiRows, inmatRows, aguaRows, combustibleRows, climaRows] = await Promise.all([
+    const [
+      demoRows,
+      workRows,
+      healthRows,
+      internetRows,
+      nbiRows,
+      inmatRows,
+      aguaRows,
+      combustibleRows,
+      climaRows,
+      educacionRows,
+    ] = await Promise.all([
+      // 1. Demografía
       queryDwh(`
         SELECT
           SUM(poblacion_2022)::bigint AS total_poblacion,
@@ -18,6 +30,7 @@ export async function GET() {
         FROM censo_ipecd_departamentos
         WHERE LOWER(departamento) NOT LIKE '%total%'
       `),
+      // 2. Mercado de Trabajo
       queryDwh(`
         SELECT
           tasa_de_actividad::numeric AS actividad,
@@ -30,19 +43,21 @@ export async function GET() {
         WHERE LOWER(departamento) = 'total'
         LIMIT 1
       `),
+      // 3. Salud
       queryDwh(`
         SELECT
+          division_geo,
           "obra_social_PAMI"::numeric AS con_cobertura,
           "sin_cobertura"::numeric AS sin_cobertura,
           "programas_estatales"::numeric AS programas_estatales
         FROM censo_nea_nacion_cobertura_salud
-        WHERE LOWER(division_geo) = 'corrientes'
-        LIMIT 1
       `),
+      // 4. Internet
       queryDatalake(`
         SELECT SUM(total_viviendas)::bigint AS total, SUM(con_internet)::bigint AS con_net
         FROM base_internet
       `),
+      // 5. NBI
       queryDatalake(`
         SELECT
           SUM(total_viviendas)::bigint AS total,
@@ -50,10 +65,12 @@ export async function GET() {
           SUM(si_nbi_hacinamiento)::bigint AS hacinamiento
         FROM base_nbi
       `),
+      // 6. INMAT
       queryDatalake(`
         SELECT SUM(total_viviendas)::bigint AS total, SUM(calidad_1)::bigint AS cal1
         FROM base_inmat
       `),
+      // 7. Agua
       queryDatalake(`
         SELECT
           SUM(total_vivienda)::bigint AS total,
@@ -62,24 +79,59 @@ export async function GET() {
           SUM(bomba_manual + pozo_sin_bomba + cisterna_canal_acequia + otra)::bigint AS otras
         FROM base_agua_beber_o_cocinar
       `),
+      // 8. Combustible
       queryDatalake(`
         SELECT SUM(total_viviendas)::bigint AS total, SUM(gas_garrafa)::bigint AS garrafa
         FROM base_combustible_para_cocinar
       `),
+      // 9. Clima Educativo
       queryDatalake(`
         SELECT SUM(total_viviendas)::bigint AS total, SUM(clima_medio)::bigint AS medio
         FROM base_clima_educativo_hogar
       `),
+      // 10. Educación (SELECT * para no romper si varía mayúscula/minúscula)
+      queryDwh(`
+        SELECT *
+        FROM censo_nea_nacion_nivel_educativo_mayores_25
+      `),
     ]);
 
+    const cleanStr = (s: string) =>
+      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const formatPctFromRatio = (val: any) => {
+      if (val === undefined || val === null) return '—';
+      let num = Number(val);
+      if (isNaN(num)) return '—';
+      if (num > 0 && num <= 1) num *= 100;
+      return pct(num);
+    };
+
+    // Demografía
     const d = demoRows[0] || {};
-    const w = workRows[0] || {};
-    const s = healthRows[0] || {};
     const pop = Number(d.total_poblacion) || 0;
     const varonesPct = Number(d.varones_pct) || 0;
     const mujeresPct = Number(d.mujeres_pct) || 0;
     const totalHogares = 379129;
 
+    // Trabajo
+    const w = workRows[0] || {};
+
+    // Salud
+    const sCorrientes = healthRows.find((row: any) => cleanStr(row.division_geo).includes('corrientes'));
+
+    // Educación
+    const edProv = educacionRows.find((r: any) => cleanStr(r.division_geo).includes('corrientes'));
+    const edPais = educacionRows.find((r: any) => {
+      const n = cleanStr(r.division_geo);
+      return n.includes('pais') || n.includes('total') || n.includes('nacion');
+    });
+    const edNea = educacionRows.find((r: any) => cleanStr(r.division_geo).includes('nea'));
+
+    const getSecundariaVal = (row: any) =>
+      row ? (row.secundaria_completa ?? row.Secundaria_Completa ?? row['secundaria completa'] ?? null) : null;
+
+    // Hábitat e infraestructura
     const internet = internetRows[0] || {};
     const netTotal = Number(internet.total) || 0;
     const netCon = Number(internet.con_net) || 0;
@@ -121,12 +173,12 @@ export async function GET() {
         servicioDomesticoPct: pct(Number(w.servicio_domestico) || 0),
       },
       educacionSalud: {
-        secundariaCompleta: '31,3 %',
-        secundariaPais: '34,7 %',
-        secundariaNea: '29,6 %',
-        conObraSocial: pct((Number(s.con_cobertura) || 0) * 100),
-        sinCobertura: pct((Number(s.sin_cobertura) || 0) * 100),
-        programasEstatales: pct((Number(s.programas_estatales) || 0) * 100),
+        secundariaCompleta: formatPctFromRatio(getSecundariaVal(edProv)) !== '—' ? `${formatPctFromRatio(getSecundariaVal(edProv))} %` : '31,3 %',
+        secundariaPais: formatPctFromRatio(getSecundariaVal(edPais)) !== '—' ? `${formatPctFromRatio(getSecundariaVal(edPais))} %` : '34,7 %',
+        secundariaNea: formatPctFromRatio(getSecundariaVal(edNea)) !== '—' ? `${formatPctFromRatio(getSecundariaVal(edNea))} %` : '29,6 %',
+        conObraSocial: formatPctFromRatio(sCorrientes?.con_cobertura),
+        sinCobertura: formatPctFromRatio(sCorrientes?.sin_cobertura),
+        programasEstatales: formatPctFromRatio(sCorrientes?.programas_estatales),
         hogaresClimaMedio: Number(climaRows[0]?.medio || 0).toLocaleString('es-AR'),
       },
       habitat: {

@@ -8,7 +8,6 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('search') || '';
 
-    // Consultamos la tabla de municipios del DWH
     let sql = `
       SELECT 
         municipio,
@@ -30,10 +29,11 @@ export async function GET(request: NextRequest) {
 
     const rows = await queryDwh(sql, params);
 
-    // Totales provinciales globales
     const totalPoblacion = rows.reduce((acc, r) => acc + (Number(r.pop_2022) || 0), 0);
-    const totalHogaresProv = 379129; // Censo 2022
-    const promedioHogarProv = 3.19;
+    const totalHogaresProv = 379129;
+    const promedioHogarProv = totalHogaresProv > 0 && totalPoblacion > 0
+      ? (totalPoblacion / totalHogaresProv).toFixed(2).replace('.', ',')
+      : '3,19';
 
     return NextResponse.json({
       totalPoblacion,

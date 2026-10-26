@@ -5,7 +5,6 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    // Consultamos las ramas sumando los valores de la tabla
     const rows = await queryDwh(`
       SELECT 
         SUM(comercio)::bigint as comercio,
@@ -28,31 +27,38 @@ export async function GET(request: NextRequest) {
 
     const r = rows[0];
 
-    const sectores = [
-      { sector: 'Administración Pública, Educación y Salud Pública', valor: Number(r.admin_publica) || 0, color: '#1e3a8a' },
-      { sector: 'Comercio Mayorista y Minorista', valor: Number(r.comercio) || 0, color: '#047857' },
-      { sector: 'Agropecuaria, Pesca y Minería', valor: Number(r.agro) || 0, color: '#059669' },
-      { sector: 'Industria Manufacturera', valor: Number(r.industria) || 0, color: '#2563eb' },
-      { sector: 'Construcción', valor: Number(r.construccion) || 0, color: '#d97706' },
-      { sector: 'Otros Servicios Personales y Profesionales', valor: Number(r.otros_servicios) || 0, color: '#6366f1' },
-      { sector: 'Transporte y Almacenamiento', valor: Number(r.transporte) || 0, color: '#0891b2' },
-      { sector: 'Educación o Salud Privada', valor: Number(r.educ_salud_privada) || 0, color: '#10b981' },
-      { sector: 'Alojamiento y Servicios de Comida (Hotelería)', valor: Number(r.hoteleria_gastronomia) || 0, color: '#ea580c' },
-      { sector: 'Electricidad, Gas y Agua (Servicios)', valor: Number(r.servicios_publicos) || 0, color: '#64748b' },
-      { sector: 'Bancos, Financieras y Seguros', valor: Number(r.finanzas_seguros) || 0, color: '#475569' },
+    const sectoresBase = [
+      { sector: 'Otros Servicios Personales y Profesionales', valor: Number(r.otros_servicios) || 0 },
+      { sector: 'Comercio Mayorista y Minorista', valor: Number(r.comercio) || 0 },
+      { sector: 'Administración Pública, Educación y Salud Pública', valor: Number(r.admin_publica) || 0 },
+      { sector: 'Construcción', valor: Number(r.construccion) || 0 },
+      { sector: 'Agropecuaria, Pesca y Minería', valor: Number(r.agro) || 0 },
+      { sector: 'Industria Manufacturera', valor: Number(r.industria) || 0 },
+      { sector: 'Educación o Salud Privada', valor: Number(r.educ_salud_privada) || 0 },
+      { sector: 'Transporte y Almacenamiento', valor: Number(r.transporte) || 0 },
+      { sector: 'Alojamiento y Servicios de Comida (Hotelería)', valor: Number(r.hoteleria_gastronomia) || 0 },
+      { sector: 'Electricidad, Gas y Agua (Servicios)', valor: Number(r.servicios_publicos) || 0 },
+      { sector: 'Bancos, Financieras y Seguros', valor: Number(r.finanzas_seguros) || 0 },
     ].sort((a, b) => b.valor - a.valor);
 
-    const totalOcupados = sectores.reduce((acc, s) => acc + s.valor, 0);
+    const totalPoblacion = sectoresBase.reduce((acc, s) => acc + s.valor, 0);
 
-    const sectoresConPct = sectores.map((s) => ({
+    const comercioVal = Number(r.comercio) || 0;
+    const industriaVal = Number(r.industria) || 0;
+    const pctComercioIndustria = totalPoblacion > 0
+      ? (((comercioVal + industriaVal) / totalPoblacion) * 100).toFixed(1).replace('.', ',')
+      : '0,0';
+
+    const sectores = sectoresBase.map((s) => ({
       ...s,
-      porcentaje: totalOcupados > 0 ? ((s.valor / totalOcupados) * 100).toFixed(1).replace('.', ',') : '0',
+      pct: totalPoblacion > 0 ? ((s.valor / totalPoblacion) * 100).toFixed(1).replace('.', ',') : '0,0',
     }));
 
     return NextResponse.json({
-      totalOcupados,
-      topSector: sectoresConPct[0] || null,
-      sectores: sectoresConPct,
+      totalPoblacion,
+      principalSector: sectores[0] || null,
+      pctComercioIndustria,
+      sectores,
     });
   } catch (error) {
     console.error('Error al consultar ramas de actividad:', error);

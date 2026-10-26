@@ -18,29 +18,28 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_agua
     `);
 
-    // 2. Detalle territorial desde base_agua_beber_o_cocinar en datalake
+    // 2. Detalle territorial consolidado por municipio/departamento
     let rowsDetalle: any[] = [];
     try {
       rowsDetalle = await queryDatalake(`
         SELECT 
-          b.codigo,
-          COALESCE(p.municipio_p1, p.depto_p18, CONCAT('Área ', b.codigo)) as nombre,
-          b.total_vivienda::bigint as total_viviendas,
-          b.red_publica::bigint as red_publica,
-          b.bomba_motor::bigint as bomba_motor,
-          b.bomba_manual::bigint as bomba_manual,
-          b.pozo_sin_bomba::bigint as pozo_sin_bomba,
-          b.cisterna_canal_acequia::bigint as cisterna_acequia,
-          b.otra::bigint as otra
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+          SUM(b.total_vivienda)::bigint as total_viviendas,
+          SUM(b.red_publica)::bigint as red_publica,
+          SUM(b.bomba_motor)::bigint as bomba_motor,
+          SUM(b.bomba_manual)::bigint as bomba_manual,
+          SUM(b.pozo_sin_bomba)::bigint as pozo_sin_bomba,
+          SUM(b.cisterna_canal_acequia)::bigint as cisterna_acequia,
+          SUM(b.otra)::bigint as otra
         FROM base_agua_beber_o_cocinar b
-        LEFT JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        ORDER BY b.total_vivienda DESC
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+        ORDER BY total_viviendas DESC
       `);
     } catch (e) {
-      console.warn('Fallback en join agua:', e);
+      console.warn('Fallback en query agrupada de agua:', e);
       rowsDetalle = await queryDatalake(`
         SELECT 
-          codigo,
           CONCAT('Área ', codigo) as nombre,
           total_vivienda::bigint as total_viviendas,
           red_publica::bigint as red_publica,
@@ -51,6 +50,7 @@ export async function GET(request: NextRequest) {
           otra::bigint as otra
         FROM base_agua_beber_o_cocinar
         ORDER BY total_vivienda DESC
+        LIMIT 30
       `);
     }
 
@@ -85,7 +85,6 @@ export async function GET(request: NextRequest) {
         const ca = Number(r.cisterna_acequia) || 0;
         const ot = Number(r.otra) || 0;
         return {
-          codigo: r.codigo,
           nombre: r.nombre,
           total_viviendas: tot,
           red_publica: rp,

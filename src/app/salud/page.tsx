@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { HeartPulse, ChevronLeft, BarChart2, Table as TableIcon, Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { 
+  HeartPulse, 
+  ChevronLeft, 
+  BarChart2, 
+  Table as TableIcon, 
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -14,10 +23,17 @@ import {
   Legend,
 } from 'recharts';
 
+type SortField = 'departamento' | 'poblacion' | 'obra_social_pct' | 'programas_pct' | 'sin_cobertura_pct';
+type SortOrder = 'asc' | 'desc';
+
 export default function SaludPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+
+  // Estados de ordenamiento exclusivos de la tabla
+  const [sortField, setSortField] = useState<SortField>('poblacion');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
@@ -35,8 +51,60 @@ export default function SaludPage() {
     load();
   }, []);
 
-  const deptos = data?.departamentos || [];
+  const deptosOriginal = data?.departamentos || [];
   const totales = data?.totalesProvincia;
+
+  // Datos fijos para el gráfico: preserva orden por población de mayor a menor
+  const datosGrafico = useMemo(() => {
+    return [...deptosOriginal].sort((a: any, b: any) => (Number(b.poblacion) || 0) - (Number(a.poblacion) || 0));
+  }, [deptosOriginal]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
+          <ArrowUpDown size={12} color="#94a3b8" />
+        </span>
+      );
+    }
+    return sortOrder === 'asc' ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    );
+  };
+
+  // Datos ordenados exclusivamente para la tabla
+  const deptosTablaOrdenados = useMemo(() => {
+    if (!deptosOriginal.length) return [];
+    return [...deptosOriginal].sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'departamento') {
+        aVal = (a.departamento || '').toLowerCase();
+        bVal = (b.departamento || '').toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      aVal = Number(a[sortField]) || 0;
+      bVal = Number(b[sortField]) || 0;
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [deptosOriginal, sortField, sortOrder]);
 
   return (
     <div className="container">
@@ -53,7 +121,7 @@ export default function SaludPage() {
         </div>
       </div>
 
-      {/* KPIs Calculados Dinámicamente */}
+      {/* Tarjetas KPI Superiores dinámicas */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
           <span className="metricLabel">Población Total Evaluada</span>
@@ -66,35 +134,29 @@ export default function SaludPage() {
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
           <span className="metricLabel">Obra Social o Prepaga (Inc. PAMI)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {totales ? `${totales.pctObraSocial} %` : '...'}
+            {totales?.pctObraSocial || '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            Porcentaje de la población
-          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6' }}>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
           <span className="metricLabel">Programas Estatales de Salud</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {totales ? `${totales.pctProgramas} %` : '...'}
+            {totales?.pctProgramas || '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            Porcentaje de la población
-          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
           <span className="metricLabel">Sin Obra Social ni Cobertura</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
-            {totales ? `${totales.pctSinCobertura} %` : '...'}
+            {totales?.pctSinCobertura || '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            Porcentaje de la población
-          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
         </div>
       </div>
 
-      {/* Gráfico / Tabla por Departamento */}
+      {/* Gráfico / Tabla */}
       <div className="card" style={{ marginTop: 12 }}>
         <div className="cardHeader">
           <div className="cardTitle">
@@ -148,54 +210,185 @@ export default function SaludPage() {
           {loading ? (
             <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
               <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando coberturas desde la base...</span>
+              <span>Calculando cobertura de salud...</span>
             </div>
           ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 600 }}>
+            <div style={{ width: '100%', height: 620 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={deptos} margin={{ top: 10, right: 30, left: 40, bottom: 20 }}>
-                <XAxis type="number" domain={[0, 100]} allowDataOverflow tickFormatter={(v) => `${v}%`} stroke="#94a3b8" fontSize={11} />
-                  <YAxis type="category" dataKey="departamento" width={130} stroke="#475569" fontSize={11} tickLine={false} />
+                <BarChart
+                  layout="vertical"
+                  data={datosGrafico}
+                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                >
+                  <XAxis
+                    type="number"
+                    domain={[0, 100]}
+                    tickFormatter={(v) => `${v}%`}
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    label={{
+                      value: 'Distribución porcentual de cobertura de salud (%)',
+                      position: 'insideBottom',
+                      offset: -18,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="departamento"
+                    width={140}
+                    stroke="#475569"
+                    fontSize={11}
+                    tickLine={false}
+                    label={{
+                      value: 'Departamento',
+                      angle: -90,
+                      position: 'insideLeft',
+                      offset: -10,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      style: { textAnchor: 'middle' },
+                    }}
+                  />
                   <Tooltip
                     formatter={(val: any, name: any) => [
-                      `${Number(val).toLocaleString('es-AR', { maximumFractionDigits: 1 })} %`,
-                      name === 'obra_social_pct' ? 'Obra Social / PAMI' : name === 'programas_pct' ? 'Programas Estatales' : 'Sin Cobertura'
+                      `${Number(val).toFixed(1).replace('.', ',')} %`,
+                      name === 'obra_social_pct'
+                        ? 'Obra Social / Prepaga / PAMI'
+                        : name === 'programas_pct'
+                        ? 'Programas Estatales'
+                        : 'Sin Cobertura',
                     ]}
-                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: 'none', color: '#ffffff', fontSize: '0.78rem' }}
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: 8,
+                      border: '1px solid #334155',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{
+                      color: '#ffffff',
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: '0.8rem',
+                    }}
+                    itemStyle={{
+                      color: '#34d399',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                    }}
                   />
                   <Legend
                     verticalAlign="top"
                     align="center"
                     height={36}
-                    formatter={(val) => (val === 'obra_social_pct' ? 'Obra Social / Prepaga / PAMI' : val === 'programas_pct' ? 'Programas Estatales' : 'Sin Cobertura')}
+                    formatter={(val) =>
+                      val === 'obra_social_pct'
+                        ? 'Obra Social / Prepaga / PAMI'
+                        : val === 'programas_pct'
+                        ? 'Programas Estatales'
+                        : 'Sin Cobertura'
+                    }
                   />
-                  <Bar dataKey="obra_social_pct" stackId="salud" fill="#059669" />
-                  <Bar dataKey="programas_pct" stackId="salud" fill="#2563eb" />
+                  <Bar dataKey="obra_social_pct" stackId="salud" fill="#047857" radius={[0, 0, 0, 0]} />
+                  <Bar dataKey="programas_pct" stackId="salud" fill="#2563eb" radius={[0, 0, 0, 0]} />
                   <Bar dataKey="sin_cobertura_pct" stackId="salud" fill="#dc2626" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                maxHeight: '480px',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#ffffff',
+                    zIndex: 2,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}
+                >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Departamento</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Población Total</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>% Obra Social / PAMI</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>% Programas Estatales</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>% Sin Cobertura</th>
+                    <th 
+                      onClick={() => handleSort('departamento')}
+                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span>Departamento</span>
+                        {renderSortIcon('departamento')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('poblacion')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Población Total</span>
+                        {renderSortIcon('poblacion')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('obra_social_pct')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Obra Social / PAMI</span>
+                        {renderSortIcon('obra_social_pct')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('programas_pct')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Programas Estatales</span>
+                        {renderSortIcon('programas_pct')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('sin_cobertura_pct')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Sin Cobertura</span>
+                        {renderSortIcon('sin_cobertura_pct')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {deptos.map((row: any, idx: number) => (
-                    <tr key={row.departamento} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{row.departamento}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.poblacion.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.poblacion.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#047857', fontWeight: 600 }}>{row.obra_social_pct.toLocaleString('es-AR', { maximumFractionDigits: 1 })} %</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#1d4ed8' }}>{row.programas_pct.toLocaleString('es-AR', { maximumFractionDigits: 1 })} %</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', color: '#b91c1c', fontWeight: 600 }}>{row.sin_cobertura_pct.toLocaleString('es-AR', { maximumFractionDigits: 1 })} %</td>
+                  {deptosTablaOrdenados.map((row: any, idx: number) => (
+                    <tr
+                      key={row.departamento || idx}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                      }}
+                    >
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.departamento}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
+                        {row.poblacion.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#047857' }}>
+                        {row.obra_social_pct.toFixed(1).replace('.', ',')} %
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#1d4ed8' }}>
+                        {row.programas_pct.toFixed(1).replace('.', ',')} %
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#b91c1c' }}>
+                        {row.sin_cobertura_pct.toFixed(1).replace('.', ',')} %
+                      </td>
                     </tr>
                   ))}
                 </tbody>

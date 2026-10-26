@@ -3,8 +3,6 @@ import { queryDwh } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-const pct = (value: number) => value.toFixed(1).replace('.', ',');
-
 export async function GET() {
   try {
     const [comparativaRows, deptosRows] = await Promise.all([
@@ -30,23 +28,42 @@ export async function GET() {
     ]);
 
     const totalPoblacion = deptosRows.reduce((total, row) => total + (Number(row.poblacion) || 0), 0);
-    const corrientes = comparativaRows.find((row) => String(row.division_geo).toLowerCase() === 'corrientes');
+
+    const formatPct = (val: any) => {
+      if (val === undefined || val === null) return '—';
+      let num = Number(val);
+      if (isNaN(num)) return '—';
+      if (num > 0 && num <= 1) num *= 100;
+      return `${num.toFixed(1).replace('.', ',')} %`;
+    };
+
+    const cleanStr = (s: string) =>
+      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const corrientes = comparativaRows.find((row) => cleanStr(row.division_geo).includes('corrientes'));
 
     return NextResponse.json({
       totalesProvincia: {
         totalPoblacion,
-        pctObraSocial: pct((Number(corrientes?.con_cobertura) || 0) * 100),
-        pctProgramas: pct((Number(corrientes?.programas_estatales) || 0) * 100),
-        pctSinCobertura: pct((Number(corrientes?.sin_cobertura) || 0) * 100),
+        pctObraSocial: formatPct(corrientes?.con_cobertura),
+        pctProgramas: formatPct(corrientes?.programas_estatales),
+        pctSinCobertura: formatPct(corrientes?.sin_cobertura),
       },
       comparativa: comparativaRows,
-      departamentos: deptosRows.map((row) => ({
-        departamento: row.departamento,
-        poblacion: Number(row.poblacion) || 0,
-        obra_social_pct: Number(row.obra_social_pct) || 0,
-        programas_pct: Number(row.programas_pct) || 0,
-        sin_cobertura_pct: Number(row.sin_cobertura_pct) || 0,
-      })),
+      departamentos: deptosRows.map((row) => {
+        const pob = Number(row.poblacion) || 0;
+        const os = Number(row.obra_social_pct) || 0;
+        const pr = Number(row.programas_pct) || 0;
+        const sc = Number(row.sin_cobertura_pct) || 0;
+
+        return {
+          departamento: row.departamento,
+          poblacion: pob,
+          obra_social_pct: os,
+          programas_pct: pr,
+          sin_cobertura_pct: sc,
+        };
+      }),
     });
   } catch (error) {
     console.error('Error al consultar cobertura de salud:', error);

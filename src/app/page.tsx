@@ -46,16 +46,24 @@ export default function HomePage() {
   const t = data?.trabajo;
   const es = data?.educacionSalud;
   const h = data?.habitat;
+
+  // Cálculos dinámicos de Actividad Económica
   const sectores = actividad?.sectores || [];
+  const totalOcupados = actividad?.totalPoblacion || actividad?.totalOcupados || 0;
+  
   const industriaComercio = sectores
     .filter((sector: any) => ['Industria Manufacturera', 'Comercio Mayorista y Minorista'].includes(sector.sector))
-    .reduce((total: number, sector: any) => total + sector.valor, 0);
-  const industriaComercioPct = actividad?.totalOcupados
-    ? ((industriaComercio / actividad.totalOcupados) * 100).toFixed(1).replace('.', ',')
+    .reduce((total: number, sector: any) => total + (Number(sector.valor) || 0), 0);
+
+  const industriaComercioPct = totalOcupados > 0
+    ? ((industriaComercio / totalOcupados) * 100).toFixed(1).replace('.', ',')
     : '—';
-  const topSectorNombre = actividad?.topSector?.sector === 'Otros Servicios Personales y Profesionales'
+
+  const principalSector = actividad?.principalSector || sectores[0];
+  const topSectorNombre = principalSector?.sector === 'Otros Servicios Personales y Profesionales'
     ? 'Otros servicios'
-    : actividad?.topSector?.sector;
+    : principalSector?.sector || 'Otros servicios';
+  const topSectorPct = principalSector?.pct || '—';
 
   return (
     <div className="container">
@@ -229,21 +237,21 @@ export default function HomePage() {
                 <div className="indicatorContext">Porcentajes sobre la población ocupada, por categoría ocupacional.</div>
               </div>
 
-              {/* Fila 3: Ramas Económicas */}
+              {/* Fila 3: Rama Económica */}
               <div className="indicatorRow">
                 <div className="metricCol">
                   <Briefcase className="w-4 h-4 text-slate-400" />
                 </div>
                 <div className="metricCol">
-                  <span className="metricVal">{topSectorNombre || '—'}</span>
-                  <span className="metricLabel">Mayor sector ({actividad?.topSector?.porcentaje || '—'} %)</span>
+                  <span className="metricVal">{topSectorPct} %</span>
+                  <span className="metricLabel">{topSectorNombre}</span>
                 </div>
                 <div className="metricCol">
                   <span className="metricVal">{industriaComercioPct} %</span>
                   <span className="metricLabel">Ind. y Comercio</span>
                 </div>
                 <div className="metricCol">
-                  <span className="metricVal">{actividad?.totalOcupados?.toLocaleString('es-AR') || '—'}</span>
+                  <span className="metricVal">{totalOcupados ? Number(totalOcupados).toLocaleString('es-AR') : '—'}</span>
                   <span className="metricLabel">Ocupados Totales</span>
                 </div>
                 <div className="actionGroup">
@@ -325,15 +333,15 @@ export default function HomePage() {
                   <HeartPulse className="w-4 h-4 text-slate-400" />
                 </div>
                 <div className="metricCol">
-                  <span className="metricVal" style={{ color: '#047857' }}>{es?.conObraSocial || '—'} %</span>
+                  <span className="metricVal" style={{ color: '#047857' }}>{es?.conObraSocial || '—'}</span>
                   <span className="metricLabel">Obra Social/PAMI</span>
                 </div>
                 <div className="metricCol">
-                  <span className="metricVal" style={{ color: '#b91c1c' }}>{es?.sinCobertura || '—'} %</span>
+                  <span className="metricVal" style={{ color: '#b91c1c' }}>{es?.sinCobertura || '—'}</span>
                   <span className="metricLabel">Sin Cobertura</span>
                 </div>
                 <div className="metricCol">
-                  <span className="metricVal">{es?.programasEstatales || '—'} %</span>
+                  <span className="metricVal">{es?.programasEstatales || '—'}</span>
                   <span className="metricLabel">Planes Estatales</span>
                 </div>
                 <div className="actionGroup">

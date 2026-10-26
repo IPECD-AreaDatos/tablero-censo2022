@@ -13,31 +13,49 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_internet
     `);
 
-    // 2. Detalle territorial desde base_internet en datalake
+    const cleanStr = (s: string) =>
+      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const formatPct = (val: any) => {
+      if (val === undefined || val === null) return '—';
+      let num = Number(val);
+      if (isNaN(num)) return '—';
+      if (num > 0 && num <= 1) num *= 100;
+      return `${num.toFixed(1).replace('.', ',')} %`;
+    };
+
+    const filaProv = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('corrientes'));
+    const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
+    const filaPais = rowsComparativa.find((c: any) => {
+      const nom = cleanStr(c.division_geo);
+      return nom.includes('pais') || nom.includes('total') || nom.includes('nacion');
+    });
+
+    // 2. Detalle territorial consolidado por municipio/departamento
     let rowsDetalle: any[] = [];
     try {
       rowsDetalle = await queryDatalake(`
         SELECT 
-          b.codigo,
-          COALESCE(p.municipio_p1, p.depto_p18, CONCAT('Área ', b.codigo)) as nombre,
-          b.total_viviendas::bigint as total_viviendas,
-          b.con_internet::bigint as con_internet,
-          b.sin_internet::bigint as sin_internet
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+          SUM(b.total_viviendas)::bigint as total_viviendas,
+          SUM(b.con_internet)::bigint as con_internet,
+          SUM(b.sin_internet)::bigint as sin_internet
         FROM base_internet b
-        LEFT JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        ORDER BY b.total_viviendas DESC
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+        ORDER BY total_viviendas DESC
       `);
     } catch (e) {
-      console.warn('Fallback en join internet:', e);
+      console.warn('Fallback en query agrupada de internet:', e);
       rowsDetalle = await queryDatalake(`
         SELECT 
-          codigo,
           CONCAT('Área ', codigo) as nombre,
           total_viviendas::bigint as total_viviendas,
           con_internet::bigint as con_internet,
           sin_internet::bigint as sin_internet
         FROM base_internet
         ORDER BY total_viviendas DESC
+        LIMIT 30
       `);
     }
 
@@ -56,13 +74,17 @@ export async function GET(request: NextRequest) {
         pctConInternet,
         pctSinInternet,
       },
+      kpis: {
+        pctProv: formatPct(filaProv?.acceso_internet) !== '—' ? formatPct(filaProv?.acceso_internet) : `${pctConInternet} %`,
+        pctPais: formatPct(filaPais?.acceso_internet),
+        pctNea: formatPct(filaNea?.acceso_internet),
+      },
       comparativa: rowsComparativa,
       detalle: rowsDetalle.map((r) => {
         const tot = Number(r.total_viviendas) || 1;
         const con = Number(r.con_internet) || 0;
         const sin = Number(r.sin_internet) || 0;
         return {
-          codigo: r.codigo,
           nombre: r.nombre,
           total_viviendas: tot,
           con_internet: con,

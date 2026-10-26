@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { Droplets, ChevronLeft, BarChart2, Table as TableIcon, Loader2 } from 'lucide-react';
+import { 
+  Droplets, 
+  ChevronLeft, 
+  BarChart2, 
+  Table as TableIcon, 
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -14,12 +23,18 @@ import {
 } from 'recharts';
 
 type TipoAgua = 'red_publica' | 'bomba_motor' | 'pozo_sin_bomba' | 'cisterna_acequia';
+type SortField = 'nombre' | 'total_viviendas' | 'valor_agua' | 'pct_agua';
+type SortOrder = 'asc' | 'desc';
 
 export default function AguaPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTipo, setSelectedTipo] = useState<TipoAgua>('red_publica');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+
+  // Estados de ordenamiento exclusivos de la tabla
+  const [sortField, setSortField] = useState<SortField>('valor_agua');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
@@ -37,7 +52,7 @@ export default function AguaPage() {
     load();
   }, []);
 
-  const detalle = data?.detalle || [];
+  const detalleOriginal = data?.detalle || [];
   const totales = data?.totalesProvincia;
 
   const labelsAgua: Record<TipoAgua, string> = {
@@ -46,6 +61,70 @@ export default function AguaPage() {
     pozo_sin_bomba: 'Pozo o Bomba Manual',
     cisterna_acequia: 'Cisterna, Canal o Acequia',
   };
+
+  // Datos fijos para el gráfico: siempre ordenados de mayor a menor por el tipo de agua seleccionado
+  const datosGrafico = useMemo(() => {
+    if (!detalleOriginal.length) return [];
+    return [...detalleOriginal]
+      .sort((a: any, b: any) => (Number(b[selectedTipo]) || 0) - (Number(a[selectedTipo]) || 0))
+      .slice(0, 25);
+  }, [detalleOriginal, selectedTipo]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
+          <ArrowUpDown size={12} color="#94a3b8" />
+        </span>
+      );
+    }
+    return sortOrder === 'asc' ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    );
+  };
+
+  // Datos ordenados exclusivamente para la tabla
+  const detalleTablaOrdenado = useMemo(() => {
+    if (!detalleOriginal.length) return [];
+    return [...detalleOriginal].sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'nombre') {
+        aVal = (a.nombre || '').toLowerCase();
+        bVal = (b.nombre || '').toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      if (sortField === 'total_viviendas') {
+        aVal = Number(a.total_viviendas) || 0;
+        bVal = Number(b.total_viviendas) || 0;
+      } else if (sortField === 'valor_agua') {
+        aVal = Number(a[selectedTipo]) || 0;
+        bVal = Number(b[selectedTipo]) || 0;
+      } else if (sortField === 'pct_agua') {
+        aVal = parseFloat(String(a[`pct_${selectedTipo}`] || '0').replace(',', '.')) || 0;
+        bVal = parseFloat(String(b[`pct_${selectedTipo}`] || '0').replace(',', '.')) || 0;
+      }
+
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [detalleOriginal, sortField, sortOrder, selectedTipo]);
 
   return (
     <div className="container">
@@ -126,7 +205,7 @@ export default function AguaPage() {
             style={{
               border: '1px solid',
               borderColor: selectedTipo === t ? '#10b981' : '#cbd5e1',
-              backgroundColor: selectedTipo === t ? '#14203b' : '#f8fafc',
+              backgroundColor: selectedTipo === t ? '#1b2d57' : '#f8fafc',
               color: selectedTipo === t ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
@@ -199,39 +278,151 @@ export default function AguaPage() {
           ) : viewMode === 'grafico' ? (
             <div style={{ width: '100%', height: 600 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={detalle.slice(0, 25)} margin={{ top: 10, right: 30, left: 20, bottom: 20 }}>
-                  <XAxis type="number" tickFormatter={(v) => Number(v).toLocaleString('es-AR')} stroke="#94a3b8" fontSize={11} />
-                  <YAxis type="category" dataKey="nombre" width={140} stroke="#475569" fontSize={11} tickLine={false} />
-                  <Tooltip
-                    formatter={(val: any) => [Number(val).toLocaleString('es-AR') + ' viviendas', labelsAgua[selectedTipo]]}
-                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: 'none', color: '#ffffff', fontSize: '0.78rem' }}
+                <BarChart
+                  layout="vertical"
+                  data={datosGrafico}
+                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                >
+                  <XAxis
+                    type="number"
+                    tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    label={{
+                      value: 'Cantidad de Viviendas Particulares',
+                      position: 'insideBottom',
+                      offset: -18,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
                   />
-                  <Bar 
-                    dataKey={selectedTipo} 
-                    fill={selectedTipo === 'red_publica' ? '#047857' : selectedTipo === 'bomba_motor' ? '#2563eb' : '#d97706'} 
-                    radius={[0, 4, 4, 0]} 
+                  <YAxis
+                    type="category"
+                    dataKey="nombre"
+                    width={150}
+                    stroke="#475569"
+                    fontSize={11}
+                    tickLine={false}
+                    label={{
+                      value: 'Territorio / Área',
+                      angle: -90,
+                      position: 'insideLeft',
+                      offset: -10,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      style: { textAnchor: 'middle' },
+                    }}
+                  />
+                  <Tooltip
+                    formatter={(val: any) => [
+                      `${Number(val).toLocaleString('es-AR')} viviendas`,
+                      labelsAgua[selectedTipo],
+                    ]}
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: 8,
+                      border: '1px solid #334155',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{
+                      color: '#ffffff',
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: '0.8rem',
+                    }}
+                    itemStyle={{
+                      color: '#34d399',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                    }}
+                  />
+                  <Bar
+                    dataKey={selectedTipo}
+                    fill={selectedTipo === 'red_publica' ? '#047857' : selectedTipo === 'bomba_motor' ? '#2563eb' : '#d97706'}
+                    radius={[0, 4, 4, 0]}
                   />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                maxHeight: '480px',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#ffffff',
+                    zIndex: 2,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}
+                >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Territorio / Área</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Total Viviendas</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>{labelsAgua[selectedTipo].split(' (')[0]}</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>% Incidencia</th>
+                    <th 
+                      onClick={() => handleSort('nombre')}
+                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span>Territorio / Área</span>
+                        {renderSortIcon('nombre')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('total_viviendas')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Total Viviendas</span>
+                        {renderSortIcon('total_viviendas')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('valor_agua')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>{labelsAgua[selectedTipo].split(' (')[0]}</span>
+                        {renderSortIcon('valor_agua')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('pct_agua')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Incidencia</span>
+                        {renderSortIcon('pct_agua')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {detalle.map((row: any, idx: number) => (
-                    <tr key={row.codigo || idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{row.nombre}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>{row[selectedTipo].toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>{row[`pct_${selectedTipo}`] || '0'} %</td>
+                  {detalleTablaOrdenado.map((row: any, idx: number) => (
+                    <tr
+                      key={row.codigo || idx}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                      }}
+                    >
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>
+                        {row[selectedTipo].toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
+                        {row[`pct_${selectedTipo}`] || '0'} %
+                      </td>
                     </tr>
                   ))}
                 </tbody>

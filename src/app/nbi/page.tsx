@@ -1,9 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { Home, ChevronLeft, BarChart2, Table as TableIcon, Loader2, AlertTriangle } from 'lucide-react';
+import { 
+  AlertTriangle, 
+  ChevronLeft, 
+  BarChart2, 
+  Table as TableIcon, 
+  Loader2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,13 +22,19 @@ import {
   Tooltip,
 } from 'recharts';
 
-type DimensionNbi = 'si_nbi' | 'hacinamiento' | 'viv_inconveniente' | 'cond_sanitarias';
+type ComponenteNBI = 'si_nbi' | 'hacinamiento' | 'viv_inconveniente' | 'cond_sanitarias';
+type SortField = 'nombre' | 'total_viviendas' | 'valor_nbi' | 'pct_nbi';
+type SortOrder = 'asc' | 'desc';
 
-export default function NbiPage() {
+export default function NBIPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedDimension, setSelectedDimension] = useState<DimensionNbi>('si_nbi');
+  const [selectedComp, setSelectedComp] = useState<ComponenteNBI>('si_nbi');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+
+  // Estados de ordenamiento exclusivos de la tabla
+  const [sortField, setSortField] = useState<SortField>('valor_nbi');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
@@ -37,23 +52,79 @@ export default function NbiPage() {
     load();
   }, []);
 
-  const comparativa = data?.comparativa || [];
-  const filaPais = comparativa.find((c: any) => c.division_geo?.toLowerCase().includes('país') || c.division_geo?.toLowerCase().includes('total'));
-  const filaNea = comparativa.find((c: any) => c.division_geo?.toLowerCase().includes('nea'));
-  const filaProv = comparativa.find((c: any) => c.division_geo?.toLowerCase().includes('corrientes'));
+  const detalleOriginal = data?.detalle || [];
+  const kpis = data?.kpis;
 
-  const pctProv = filaProv ? Number(filaProv.si_nbi_total).toFixed(1).replace('.', ',') : (data?.pctNbiProv || '0');
-  const pctPais = filaPais ? Number(filaPais.si_nbi_total).toFixed(1).replace('.', ',') : '...';
-  const pctNea = filaNea ? Number(filaNea.si_nbi_total).toFixed(1).replace('.', ',') : '...';
-
-  const detalle = data?.detalle || [];
-
-  const labelsDimension: Record<DimensionNbi, string> = {
+  const labelsComp: Record<ComponenteNBI, string> = {
     si_nbi: 'Hogares con NBI (Total)',
     hacinamiento: 'Hacinamiento Crítico',
     viv_inconveniente: 'Vivienda Inconveniente',
     cond_sanitarias: 'Condiciones Sanitarias Deficitarias',
   };
+
+  // Datos fijos para el gráfico: siempre ordenados de mayor a menor según el componente NBI seleccionado
+  const datosGrafico = useMemo(() => {
+    if (!detalleOriginal.length) return [];
+    return [...detalleOriginal]
+      .sort((a: any, b: any) => (Number(b[selectedComp]) || 0) - (Number(a[selectedComp]) || 0))
+      .slice(0, 25);
+  }, [detalleOriginal, selectedComp]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const renderSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
+          <ArrowUpDown size={12} color="#94a3b8" />
+        </span>
+      );
+    }
+    return sortOrder === 'asc' ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
+        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
+      </span>
+    );
+  };
+
+  // Datos ordenados exclusivamente para la tabla
+  const detalleTablaOrdenado = useMemo(() => {
+    if (!detalleOriginal.length) return [];
+    return [...detalleOriginal].sort((a: any, b: any) => {
+      let aVal: any;
+      let bVal: any;
+
+      if (sortField === 'nombre') {
+        aVal = (a.nombre || '').toLowerCase();
+        bVal = (b.nombre || '').toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+
+      if (sortField === 'total_viviendas') {
+        aVal = Number(a.total_viviendas) || 0;
+        bVal = Number(b.total_viviendas) || 0;
+      } else if (sortField === 'valor_nbi') {
+        aVal = Number(a[selectedComp]) || 0;
+        bVal = Number(b[selectedComp]) || 0;
+      } else if (sortField === 'pct_nbi') {
+        aVal = parseFloat(String(a[`pct_${selectedComp}`] || '0').replace(',', '.')) || 0;
+        bVal = parseFloat(String(b[`pct_${selectedComp}`] || '0').replace(',', '.')) || 0;
+      }
+
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+  }, [detalleOriginal, sortField, sortOrder, selectedComp]);
 
   return (
     <div className="container">
@@ -83,7 +154,7 @@ export default function NbiPage() {
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
           <span className="metricLabel">% Hogares con NBI (Corrientes)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
-            {pctProv} %
+            {kpis?.pctProv || '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
             {data ? `${data.sumNbi.toLocaleString('es-AR')} hogares` : ''}
@@ -93,21 +164,21 @@ export default function NbiPage() {
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b' }}>
           <span className="metricLabel">% Hogares con NBI (Región NEA)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
-            {pctNea} %
+            {kpis?.pctNea || '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6' }}>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
           <span className="metricLabel">% Hogares con NBI (Total País)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {pctPais} %
+            {kpis?.pctPais || '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
         </div>
       </div>
 
-      {/* Selector de Indicador de NBI */}
+      {/* Selector de Componente NBI */}
       <div
         style={{
           display: 'flex',
@@ -123,23 +194,23 @@ export default function NbiPage() {
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
           COMPONENTE NBI:
         </span>
-        {(['si_nbi', 'hacinamiento', 'viv_inconveniente', 'cond_sanitarias'] as DimensionNbi[]).map((dim) => (
+        {(['si_nbi', 'hacinamiento', 'viv_inconveniente', 'cond_sanitarias'] as ComponenteNBI[]).map((comp) => (
           <button
-            key={dim}
-            onClick={() => setSelectedDimension(dim)}
+            key={comp}
+            onClick={() => setSelectedComp(comp)}
             style={{
               border: '1px solid',
-              borderColor: selectedDimension === dim ? '#10b981' : '#cbd5e1',
-              backgroundColor: selectedDimension === dim ? '#14203b' : '#f8fafc',
-              color: selectedDimension === dim ? '#ffffff' : '#334155',
+              borderColor: selectedComp === comp ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedComp === comp ? '#14203b' : '#f8fafc',
+              color: selectedComp === comp ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
               fontSize: '0.82rem',
-              fontWeight: selectedDimension === dim ? 700 : 500,
+              fontWeight: selectedComp === comp ? 700 : 500,
               cursor: 'pointer',
             }}
           >
-            {labelsDimension[dim]}
+            {labelsComp[comp]}
           </button>
         ))}
       </div>
@@ -149,7 +220,7 @@ export default function NbiPage() {
         <div className="cardHeader">
           <div className="cardTitle">
             <AlertTriangle className="w-4 h-4 text-emerald-400" />
-            <span>{labelsDimension[selectedDimension]} por Territorio</span>
+            <span>{labelsComp[selectedComp]} por Territorio</span>
           </div>
 
           <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -198,41 +269,151 @@ export default function NbiPage() {
           {loading ? (
             <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
               <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando dimensiones de NBI...</span>
+              <span>Calculando componentes NBI...</span>
             </div>
           ) : viewMode === 'grafico' ? (
             <div style={{ width: '100%', height: 600 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={detalle.slice(0, 25)} margin={{ top: 10, right: 30, left: 20, bottom: 20 }}>
-                  <XAxis type="number" tickFormatter={(v) => Number(v).toLocaleString('es-AR')} stroke="#94a3b8" fontSize={11} />
-                  <YAxis type="category" dataKey="nombre" width={140} stroke="#475569" fontSize={11} tickLine={false} />
-                  <Tooltip
-                    formatter={(val: any) => [Number(val).toLocaleString('es-AR') + ' hogares', labelsDimension[selectedDimension]]}
-                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: 'none', color: '#ffffff', fontSize: '0.78rem' }}
+                <BarChart
+                  layout="vertical"
+                  data={datosGrafico}
+                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                >
+                  <XAxis
+                    type="number"
+                    tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
+                    stroke="#94a3b8"
+                    fontSize={11}
+                    label={{
+                      value: 'Cantidad de Hogares',
+                      position: 'insideBottom',
+                      offset: -18,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
                   />
-                  <Bar dataKey={selectedDimension} fill="#b91c1c" radius={[0, 4, 4, 0]} />
+                  <YAxis
+                    type="category"
+                    dataKey="nombre"
+                    width={150}
+                    stroke="#475569"
+                    fontSize={11}
+                    tickLine={false}
+                    label={{
+                      value: 'Territorio / Área',
+                      angle: -90,
+                      position: 'insideLeft',
+                      offset: -10,
+                      fill: '#64748b',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      style: { textAnchor: 'middle' },
+                    }}
+                  />
+                  <Tooltip
+                    formatter={(val: any) => [
+                      `${Number(val).toLocaleString('es-AR')} hogares`,
+                      labelsComp[selectedComp],
+                    ]}
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderRadius: 8,
+                      border: '1px solid #334155',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{
+                      color: '#ffffff',
+                      fontWeight: 600,
+                      marginBottom: 4,
+                      fontSize: '0.8rem',
+                    }}
+                    itemStyle={{
+                      color: '#34d399',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                    }}
+                  />
+                  <Bar dataKey={selectedComp} fill="#b91c1c" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                maxHeight: '480px',
+                overflowY: 'auto',
+                overflowX: 'auto',
+                borderRadius: 8,
+                border: '1px solid #e2e8f0',
+              }}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead>
+                <thead
+                  style={{
+                    position: 'sticky',
+                    top: 0,
+                    backgroundColor: '#ffffff',
+                    zIndex: 2,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                  }}
+                >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th style={{ padding: '8px 10px' }}>Territorio / Área</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Total Hogares</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>{labelsDimension[selectedDimension]}</th>
-                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>% Incidencia</th>
+                    <th 
+                      onClick={() => handleSort('nombre')}
+                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <span>Territorio / Área</span>
+                        {renderSortIcon('nombre')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('total_viviendas')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>Total Hogares</span>
+                        {renderSortIcon('total_viviendas')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('valor_nbi')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>{labelsComp[selectedComp]}</span>
+                        {renderSortIcon('valor_nbi')}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('pct_nbi')}
+                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                    >
+                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                        <span>% Incidencia</span>
+                        {renderSortIcon('pct_nbi')}
+                      </div>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {detalle.map((row: any, idx: number) => (
-                    <tr key={row.codigo || idx} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
-                      <td style={{ padding: '8px 10px', fontWeight: 600 }}>{row.nombre}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700, color: '#b91c1c' }}>{row[selectedDimension].toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 600 }}>
-                        {selectedDimension === 'si_nbi' ? row.pct_nbi : row[`pct_${selectedDimension}`]} %
+                  {detalleTablaOrdenado.map((row: any, idx: number) => (
+                    <tr
+                      key={row.nombre || idx}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                      }}
+                    >
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#b91c1c' }}>
+                        {row[selectedComp].toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
+                        {row[`pct_${selectedComp}`]} %
                       </td>
                     </tr>
                   ))}
