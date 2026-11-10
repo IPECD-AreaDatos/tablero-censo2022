@@ -21,13 +21,36 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  LabelList,
 } from 'recharts';
 
-type SortField = 'municipio' | 'pop_2010' | 'pop_2022' | 'var_abs' | 'var_rel' | 'peso_relativo';
+type SortField = 'departamento' | 'municipio' | 'pop_2010' | 'pop_2022' | 'var_abs' | 'var_rel' | 'peso_relativo' | 'total_hogares' | 'personas_por_hogar';
 type SortOrder = 'asc' | 'desc';
+type MunicipioPoblacion = {
+  municipio: string;
+  departamento: string;
+  pop_2010: number;
+  pop_2022: number;
+  var_abs: number;
+  peso_relativo: number;
+  var_rel: number;
+  total_hogares: number;
+};
+type PoblacionData = {
+  totalPoblacion: number;
+  totalHogaresProv: number;
+  promedioHogarProv: string;
+  data: MunicipioPoblacion[];
+};
+
+const normalizeText = (value: string) => value
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim();
 
 export default function PoblacionPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<PoblacionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
 
@@ -55,43 +78,84 @@ export default function PoblacionPage() {
     load();
   }, []);
 
-  const municipiosData = data?.data || [];
+  const municipiosData = useMemo(() => data?.data ?? [], [data]);
 
-  // Municipios filtrados por el panel lateral
-  const listaFiltradaLateral = useMemo(() => {
-    if (!searchTerm.trim()) return municipiosData;
-    return municipiosData.filter((m: any) =>
-      m.municipio.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [municipiosData, searchTerm]);
+  const gruposDepartamentos = useMemo(() => {
+    const grupos = new Map<string, { departamento: string; municipios: MunicipioPoblacion[] }>();
+    for (const municipio of municipiosData) {
+      const departamento = municipio.departamento || 'Sin departamento';
+      if (!grupos.has(departamento)) grupos.set(departamento, { departamento, municipios: [] });
+      grupos.get(departamento)?.municipios.push(municipio);
+    }
+
+    return Array.from(grupos.values())
+      .sort((a, b) => a.departamento.localeCompare(b.departamento, 'es', { sensitivity: 'base' }))
+      .map((grupo) => ({
+        ...grupo,
+        municipios: grupo.municipios.sort((a, b) => a.municipio.localeCompare(b.municipio, 'es', { sensitivity: 'base' })),
+      }));
+  }, [municipiosData]);
+
+  const gruposFiltrados = useMemo(() => {
+    const query = normalizeText(searchTerm);
+    return gruposDepartamentos.map((grupo) => {
+      if (!query || normalizeText(grupo.departamento).includes(query)) return grupo;
+      return {
+        ...grupo,
+        municipios: grupo.municipios.filter((municipio) => normalizeText(municipio.municipio).includes(query)),
+      };
+    }).filter((grupo) => grupo.municipios.length > 0);
+  }, [gruposDepartamentos, searchTerm]);
 
   // Manejo de selecciones individuales o grupales
   const handleToggleMunicipio = (nombre: string) => {
-    if (selectedMunicipios.includes(nombre)) {
-      setSelectedMunicipios(selectedMunicipios.filter((m) => m !== nombre));
-    } else {
-      setSelectedMunicipios([...selectedMunicipios, nombre]);
-    }
+    setSelectedMunicipios((actuales) => actuales.includes(nombre)
+      ? actuales.filter((municipio) => municipio !== nombre)
+      : [...actuales, nombre]);
+  };
+
+  const handleToggleDepartamento = (departamento: string) => {
+    const nombresMunicipios = municipiosData
+      .filter((municipio) => (municipio.departamento || 'Sin departamento') === departamento)
+      .map((municipio) => municipio.municipio);
+
+    setSelectedMunicipios((actuales) => {
+      const todosSeleccionados = nombresMunicipios.every((nombre) => actuales.includes(nombre));
+      return todosSeleccionados
+        ? actuales.filter((nombre) => !nombresMunicipios.includes(nombre))
+        : Array.from(new Set([...actuales, ...nombresMunicipios]));
+    });
   };
 
   const handleSelectAll = () => {
-    if (selectedMunicipios.length === municipiosData.length) {
-      setSelectedMunicipios([]);
-    } else {
-      setSelectedMunicipios(municipiosData.map((m: any) => m.municipio));
-    }
+    setSelectedMunicipios((actuales) => actuales.length === municipiosData.length
+      ? []
+      : municipiosData.map((municipio) => municipio.municipio));
   };
 
   // Conjunto de datos base activo (si hay filtro lateral aplicado se reduce a esos)
-  const datosBaseActivos = useMemo(() => {
+  const datosBaseActivos = useMemo<MunicipioPoblacion[]>(() => {
     if (selectedMunicipios.length === 0) return municipiosData;
-    return municipiosData.filter((m: any) => selectedMunicipios.includes(m.municipio));
+    return municipiosData.filter((municipio) => selectedMunicipios.includes(municipio.municipio));
   }, [municipiosData, selectedMunicipios]);
+
+  const totalesSeleccion = useMemo(() => {
+    const poblacion = datosBaseActivos.reduce((total, municipio) => total + municipio.pop_2022, 0);
+    const hogares = datosBaseActivos.reduce((total, municipio) => total + municipio.total_hogares, 0);
+    const totalProvincia = Number(data?.totalPoblacion) || 0;
+    return {
+      poblacion,
+      hogares,
+      pesoRelativo: totalProvincia > 0 ? (poblacion / totalProvincia) * 100 : 0,
+      personasPorHogar: hogares > 0 ? poblacion / hogares : 0,
+      provinciaCompleta: selectedMunicipios.length === 0 || selectedMunicipios.length === municipiosData.length,
+    };
+  }, [data?.totalPoblacion, datosBaseActivos, municipiosData.length, selectedMunicipios.length]);
 
   // Datos fijos para el gráfico: preserva orden de mayor a menor según censo 2022
   const datosGrafico = useMemo(() => {
     return [...datosBaseActivos]
-      .sort((a: any, b: any) => Number(b.pop_2022) - Number(a.pop_2022))
+      .sort((a, b) => b.pop_2022 - a.pop_2022)
       .slice(0, 25);
   }, [datosBaseActivos]);
 
@@ -126,18 +190,21 @@ export default function PoblacionPage() {
   // Datos ordenados exclusivamente para la tabla
   const detalleTablaOrdenado = useMemo(() => {
     if (!datosBaseActivos.length) return [];
-    return [...datosBaseActivos].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
-      if (sortField === 'municipio') {
-        aVal = (a.municipio || '').toLowerCase();
-        bVal = (b.municipio || '').toLowerCase();
+    return [...datosBaseActivos].sort((a, b) => {
+      if (sortField === 'municipio' || sortField === 'departamento') {
+        const aVal = (a[sortField] || '').toLowerCase();
+        const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      aVal = Number(a[sortField]) || 0;
-      bVal = Number(b[sortField]) || 0;
+      if (sortField === 'personas_por_hogar') {
+        const aVal = a.pop_2022 / (a.total_hogares || 1);
+        const bVal = b.pop_2022 / (b.total_hogares || 1);
+        return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+
+      const aVal = Number(a[sortField]) || 0;
+      const bVal = Number(b[sortField]) || 0;
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
   }, [datosBaseActivos, sortField, sortOrder]);
@@ -160,17 +227,21 @@ export default function PoblacionPage() {
       {/* Tarjetas KPI Superiores dinámicas */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Total Provincia de Corrientes</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {data ? data.totalPoblacion.toLocaleString('es-AR') : '...'}
+          <span className="metricLabel">
+            {totalesSeleccion.provinciaCompleta ? 'Total Provincia de Corrientes' : 'Población seleccionada'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Individuos</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+            {data ? totalesSeleccion.poblacion.toLocaleString('es-AR') : '...'}
+          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {totalesSeleccion.provinciaCompleta ? 'Individuos' : 'Individuos en municipios seleccionados'}
+          </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
           <span className="metricLabel">Peso Relativo sobre la Provincia</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            100,0 %
+            {totalesSeleccion.pesoRelativo.toFixed(1).replace('.', ',')} %
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Participación en total provincial</span>
         </div>
@@ -178,14 +249,16 @@ export default function PoblacionPage() {
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
           <span className="metricLabel">Promedio Personas por Hogar</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {data?.promedioHogarProv || '3,19'}
+            {data ? totalesSeleccion.personasPorHogar.toFixed(2).replace('.', ',') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Provincia de Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {totalesSeleccion.provinciaCompleta ? 'Provincia de Corrientes' : `${totalesSeleccion.hogares.toLocaleString('es-AR')} hogares seleccionados`}
+          </span>
         </div>
       </div>
 
       {/* Disposición con Sidebar Lateral de Filtro de Municipios */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, marginTop: 12 }}>
+      <div className="population-layout">
         {/* Contenedor Principal (Gráfico o Tabla) */}
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
@@ -248,7 +321,7 @@ export default function PoblacionPage() {
                   <BarChart
                     layout="vertical"
                     data={datosGrafico}
-                    margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                    margin={{ top: 20, right: 95, left: 20, bottom: 35 }}
                   >
                     <XAxis
                       type="number"
@@ -283,7 +356,7 @@ export default function PoblacionPage() {
                       }}
                     />
                     <Tooltip
-                      formatter={(val: any) => [
+                      formatter={(val) => [
                         `${Number(val).toLocaleString('es-AR')} habitantes`,
                         'Población 2022',
                       ]}
@@ -306,7 +379,15 @@ export default function PoblacionPage() {
                         fontSize: '0.82rem',
                       }}
                     />
-                    <Bar dataKey="pop_2022" fill="#047857" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="pop_2022" fill="#047857" radius={[0, 4, 4, 0]}>
+                      <LabelList
+                        dataKey="pop_2022"
+                        position="right"
+                        formatter={(value) => Number(value).toLocaleString('es-AR')}
+                        fill="#334155"
+                        fontSize={10}
+                      />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -331,6 +412,15 @@ export default function PoblacionPage() {
                     }}
                   >
                     <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      <th
+                        onClick={() => handleSort('departamento')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Departamento</span>
+                          {renderSortIcon('departamento')}
+                        </div>
+                      </th>
                       <th 
                         onClick={() => handleSort('municipio')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
@@ -385,10 +475,28 @@ export default function PoblacionPage() {
                           {renderSortIcon('peso_relativo')}
                         </div>
                       </th>
+                      <th
+                        onClick={() => handleSort('personas_por_hogar')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Pers. / hogar</span>
+                          {renderSortIcon('personas_por_hogar')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('total_hogares')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Hogares</span>
+                          {renderSortIcon('total_hogares')}
+                        </div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {detalleTablaOrdenado.map((row: any, idx: number) => (
+                    {detalleTablaOrdenado.map((row, idx) => (
                       <tr
                         key={row.municipio || idx}
                         style={{
@@ -396,6 +504,7 @@ export default function PoblacionPage() {
                           backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
                         }}
                       >
+                        <td style={{ padding: '8px 12px', color: '#64748b' }}>{row.departamento}</td>
                         <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
                         <td style={{ padding: '8px 12px', textAlign: 'right', color: '#64748b' }}>
                           {row.pop_2010.toLocaleString('es-AR')}
@@ -412,6 +521,12 @@ export default function PoblacionPage() {
                         <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
                           {row.peso_relativo.toFixed(2)} %
                         </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
+                          {row.total_hogares > 0 ? (row.pop_2022 / row.total_hogares).toFixed(2).replace('.', ',') : '—'}
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                          {row.total_hogares.toLocaleString('es-AR')}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -422,7 +537,7 @@ export default function PoblacionPage() {
         </div>
 
         {/* Panel Lateral: Departamentos / Municipios */}
-        <div className="card" style={{ margin: 0, padding: 14 }}>
+        <div className="card population-filter-panel" style={{ margin: 0, padding: 14 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#14203b' }}>
               Departamentos / Municipios
@@ -432,21 +547,13 @@ export default function PoblacionPage() {
             </span>
           </div>
 
-          <div style={{ position: 'relative', marginBottom: 10 }}>
-            <Search className="w-3.5 h-3.5 text-slate-400" style={{ position: 'absolute', left: 8, top: 9 }} />
+          <div className="population-search">
+            <Search className="text-slate-400" />
             <input
               type="text"
-              placeholder="Buscar municipio..."
+              placeholder="Buscar depto. o municipio..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '6px 8px 6px 28px',
-                fontSize: '0.75rem',
-                border: '1px solid #cbd5e1',
-                borderRadius: 6,
-                outline: 'none',
-              }}
             />
           </div>
 
@@ -461,29 +568,44 @@ export default function PoblacionPage() {
             </label>
           </div>
 
-          <div style={{ maxHeight: 420, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {listaFiltradaLateral.map((m: any) => (
-              <label
-                key={m.municipio}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  fontSize: '0.74rem',
-                  color: '#334155',
-                  cursor: 'pointer',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedMunicipios.includes(m.municipio)}
-                  onChange={() => handleToggleMunicipio(m.municipio)}
-                />
-                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {m.municipio}
-                </span>
-              </label>
-            ))}
+          <div className="population-filter-list">
+            {gruposFiltrados.map((grupo) => {
+              const municipiosSeleccionados = grupo.municipios.filter((municipio) => selectedMunicipios.includes(municipio.municipio)).length;
+              const nombresMunicipios = municipiosData
+                .filter((municipio) => (municipio.departamento || 'Sin departamento') === grupo.departamento)
+                .map((municipio) => municipio.municipio);
+              const todosSeleccionados = nombresMunicipios.length > 0 && nombresMunicipios.every((nombre) => selectedMunicipios.includes(nombre));
+
+              return (
+                <div key={grupo.departamento}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.74rem', color: '#14203b', cursor: 'pointer', fontWeight: 700 }}>
+                    <input
+                      type="checkbox"
+                      checked={todosSeleccionados}
+                      ref={(element) => {
+                        if (element) element.indeterminate = municipiosSeleccionados > 0 && !todosSeleccionados;
+                      }}
+                      onChange={() => handleToggleDepartamento(grupo.departamento)}
+                    />
+                    <span>{grupo.departamento}</span>
+                  </label>
+                  <div style={{ margin: '5px 0 8px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {grupo.municipios.map((municipio) => (
+                      <label key={municipio.municipio} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedMunicipios.includes(municipio.municipio)}
+                          onChange={() => handleToggleMunicipio(municipio.municipio)}
+                        />
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {municipio.municipio}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
