@@ -3,15 +3,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
-import { 
-  HeartPulse, 
-  ChevronLeft, 
-  BarChart2, 
-  Table as TableIcon, 
+import {
+  HeartPulse,
+  ChevronLeft,
+  BarChart2,
+  Table as TableIcon,
   Loader2,
+  Search,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -20,19 +21,68 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
+  LabelList,
 } from 'recharts';
 
-type SortField = 'departamento' | 'poblacion' | 'obra_social_pct' | 'programas_pct' | 'sin_cobertura_pct';
+type IndicadorSalud = 'obra_social_pct' | 'programas_pct' | 'sin_cobertura_pct';
+type SortField = 'departamento' | 'municipio' | 'poblacion' | IndicadorSalud;
 type SortOrder = 'asc' | 'desc';
 
-export default function SaludPage() {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+type MunicipioSalud = {
+  departamento: string;
+  municipio: string;
+  poblacion: number;
+  obra_social: number;
+  programas: number;
+  sin_cobertura: number;
+  obra_social_pct: number;
+  programas_pct: number;
+  sin_cobertura_pct: number;
+};
 
-  // Estados de ordenamiento exclusivos de la tabla
-  const [sortField, setSortField] = useState<SortField>('poblacion');
+type SaludData = {
+  totalesProvincia: {
+    totalPoblacion: number;
+    pctObraSocial: string;
+    pctProgramas: string;
+    pctSinCobertura: string;
+  };
+  municipios: MunicipioSalud[];
+};
+
+const INDICADORES: IndicadorSalud[] = ['obra_social_pct', 'programas_pct', 'sin_cobertura_pct'];
+
+const ETIQUETAS: Record<IndicadorSalud, string> = {
+  obra_social_pct: 'Obra Social / Prepaga / PAMI',
+  programas_pct: 'Programas Estatales',
+  sin_cobertura_pct: 'Sin Cobertura',
+};
+
+const COLORES: Record<IndicadorSalud, string> = {
+  obra_social_pct: '#047857',
+  programas_pct: '#2563eb',
+  sin_cobertura_pct: '#dc2626',
+};
+
+const normalizeText = (value: string) => value
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .trim();
+
+const municipioKey = (municipio: Pick<MunicipioSalud, 'departamento' | 'municipio'>) =>
+  `${municipio.departamento}::${municipio.municipio}`;
+
+const formatPct = (value: number) => `${value.toFixed(1).replace('.', ',')} %`;
+
+export default function SaludPage() {
+  const [data, setData] = useState<SaludData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedIndicador, setSelectedIndicador] = useState<IndicadorSalud>('obra_social_pct');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedMunicipios, setSelectedMunicipios] = useState<string[] | null>(null);
+  const [sortField, setSortField] = useState<SortField>('obra_social_pct');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
@@ -40,8 +90,8 @@ export default function SaludPage() {
       try {
         setLoading(true);
         const res = await fetch(apiPath('/api/salud'));
-        const json = await res.json();
-        setData(json);
+        if (!res.ok) throw new Error('No se pudieron cargar los datos de cobertura de salud.');
+        setData(await res.json());
       } catch (err) {
         console.error(err);
       } finally {
@@ -51,13 +101,108 @@ export default function SaludPage() {
     load();
   }, []);
 
-  const deptosOriginal = data?.departamentos || [];
-  const totales = data?.totalesProvincia;
+  const municipios = useMemo(() => data?.municipios ?? [], [data]);
 
-  // Datos fijos para el gráfico: preserva orden por población de mayor a menor
+  const gruposDepartamentos = useMemo(() => {
+    const grupos = new Map<string, { departamento: string; municipios: MunicipioSalud[] }>();
+    for (const municipio of municipios) {
+      const departamento = municipio.departamento || 'Sin departamento';
+      if (!grupos.has(departamento)) grupos.set(departamento, { departamento, municipios: [] });
+      grupos.get(departamento)?.municipios.push(municipio);
+    }
+
+    return Array.from(grupos.values())
+      .sort((a, b) => a.departamento.localeCompare(b.departamento, 'es', { sensitivity: 'base' }))
+      .map((grupo) => ({
+        ...grupo,
+        municipios: grupo.municipios.sort((a, b) => a.municipio.localeCompare(b.municipio, 'es', { sensitivity: 'base' })),
+      }));
+  }, [municipios]);
+
+  const gruposFiltrados = useMemo(() => {
+    const query = normalizeText(searchTerm);
+    return gruposDepartamentos.map((grupo) => {
+      if (!query || normalizeText(grupo.departamento).includes(query)) return grupo;
+      return {
+        ...grupo,
+        municipios: grupo.municipios.filter((municipio) => normalizeText(municipio.municipio).includes(query)),
+      };
+    }).filter((grupo) => grupo.municipios.length > 0);
+  }, [gruposDepartamentos, searchTerm]);
+
+  const datosBaseActivos = useMemo(() => {
+    if (selectedMunicipios === null) return municipios;
+    return municipios.filter((municipio) => selectedMunicipios.includes(municipioKey(municipio)));
+  }, [municipios, selectedMunicipios]);
+
+  const totalesSeleccion = useMemo(() => {
+    const poblacion = datosBaseActivos.reduce((total, municipio) => total + municipio.poblacion, 0);
+    const conteos = {
+      obra_social_pct: datosBaseActivos.reduce((total, municipio) => total + municipio.obra_social, 0),
+      programas_pct: datosBaseActivos.reduce((total, municipio) => total + municipio.programas, 0),
+      sin_cobertura_pct: datosBaseActivos.reduce((total, municipio) => total + municipio.sin_cobertura, 0),
+    };
+    return {
+      poblacion,
+      porcentajes: {
+        obra_social_pct: poblacion > 0 ? (conteos.obra_social_pct / poblacion) * 100 : 0,
+        programas_pct: poblacion > 0 ? (conteos.programas_pct / poblacion) * 100 : 0,
+        sin_cobertura_pct: poblacion > 0 ? (conteos.sin_cobertura_pct / poblacion) * 100 : 0,
+      },
+    };
+  }, [datosBaseActivos]);
+
   const datosGrafico = useMemo(() => {
-    return [...deptosOriginal].sort((a: any, b: any) => (Number(b.poblacion) || 0) - (Number(a.poblacion) || 0));
-  }, [deptosOriginal]);
+    const cantidadesPorNombre = new Map<string, number>();
+    for (const municipio of datosBaseActivos) {
+      const nombre = normalizeText(municipio.municipio);
+      cantidadesPorNombre.set(nombre, (cantidadesPorNombre.get(nombre) || 0) + 1);
+    }
+
+    return [...datosBaseActivos]
+      .sort((a, b) => b[selectedIndicador] - a[selectedIndicador])
+      .map((municipio) => ({
+        ...municipio,
+        municipio_label: (cantidadesPorNombre.get(normalizeText(municipio.municipio)) || 0) > 1
+          ? `${municipio.municipio} (${municipio.departamento})`
+          : municipio.municipio,
+      }));
+  }, [datosBaseActivos, selectedIndicador]);
+
+  const datosTabla = useMemo(() => [...datosBaseActivos].sort((a, b) => {
+    let comparison: number;
+    if (sortField === 'departamento' || sortField === 'municipio') {
+      comparison = a[sortField].localeCompare(b[sortField], 'es', { sensitivity: 'base' });
+    } else {
+      comparison = a[sortField] - b[sortField];
+    }
+    return sortOrder === 'asc' ? comparison : -comparison;
+  }), [datosBaseActivos, sortField, sortOrder]);
+
+  const handleToggleMunicipio = (nombre: string) => {
+    setSelectedMunicipios((actuales) => {
+      const seleccion = actuales ?? municipios.map(municipioKey);
+      return seleccion.includes(nombre)
+        ? seleccion.filter((municipio) => municipio !== nombre)
+        : [...seleccion, nombre];
+    });
+  };
+
+  const handleToggleDepartamento = (departamento: string) => {
+    const nombresMunicipios = municipios
+      .filter((municipio) => (municipio.departamento || 'Sin departamento') === departamento)
+      .map(municipioKey);
+
+    setSelectedMunicipios((actuales) => {
+      const seleccion = actuales ?? municipios.map(municipioKey);
+      const todosSeleccionados = nombresMunicipios.every((nombre) => seleccion.includes(nombre));
+      return todosSeleccionados
+        ? seleccion.filter((nombre) => !nombresMunicipios.includes(nombre))
+        : Array.from(new Set([...seleccion, ...nombresMunicipios]));
+    });
+  };
+
+  const handleSelectAll = () => setSelectedMunicipios(mostrarSeleccionCompleta ? [] : null);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -70,45 +215,17 @@ export default function SaludPage() {
 
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
-      return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4, opacity: 0.4 }}>
-          <ArrowUpDown size={12} color="#94a3b8" />
-        </span>
-      );
+      return <ArrowUpDown size={12} color="#94a3b8" style={{ marginLeft: 4, opacity: 0.5 }} />;
     }
-    return sortOrder === 'asc' ? (
-      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
-        <ArrowUp size={12} color="#059669" strokeWidth={2.5} />
-      </span>
-    ) : (
-      <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 4 }}>
-        <ArrowDown size={12} color="#059669" strokeWidth={2.5} />
-      </span>
-    );
+    return sortOrder === 'asc'
+      ? <ArrowUp size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />
+      : <ArrowDown size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />;
   };
 
-  // Datos ordenados exclusivamente para la tabla
-  const deptosTablaOrdenados = useMemo(() => {
-    if (!deptosOriginal.length) return [];
-    return [...deptosOriginal].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
-      if (sortField === 'departamento') {
-        aVal = (a.departamento || '').toLowerCase();
-        bVal = (b.departamento || '').toLowerCase();
-        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-      }
-
-      aVal = Number(a[sortField]) || 0;
-      bVal = Number(b[sortField]) || 0;
-      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
-    });
-  }, [deptosOriginal, sortField, sortOrder]);
+  const mostrarSeleccionCompleta = selectedMunicipios === null || selectedMunicipios.length === municipios.length;
 
   return (
     <div className="container">
-      {/* Header */}
       <div className="header" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
         <Link href="/" className="arrowLink" style={{ width: 28, height: 28 }}>
           <ChevronLeft className="w-5 h-5 text-slate-600" />
@@ -116,286 +233,273 @@ export default function SaludPage() {
         <div className="titleGroup">
           <h1>COBERTURA DE SALUD EN VIVIENDAS PARTICULARES</h1>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-            Provincia de Corrientes — Censo 2022 por Departamentos
+            Provincia de Corrientes — Censo 2022 por Municipios
           </p>
         </div>
       </div>
 
-      {/* Tarjetas KPI Superiores dinámicas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Población Total Evaluada</span>
+          <span className="metricLabel">Población seleccionada</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {totales ? totales.totalPoblacion.toLocaleString('es-AR') : '...'}
+            {data ? totalesSeleccion.poblacion.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Censo 2022</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {mostrarSeleccionCompleta ? 'Provincia de Corrientes' : 'Municipios seleccionados'}
+          </span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Obra Social o Prepaga (Inc. PAMI)</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {totales?.pctObraSocial || '...'}
-          </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
-        </div>
-
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Programas Estatales de Salud</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {totales?.pctProgramas || '...'}
-          </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
-        </div>
-
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
-          <span className="metricLabel">Sin Obra Social ni Cobertura</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
-            {totales?.pctSinCobertura || '...'}
-          </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
-        </div>
+        {INDICADORES.map((indicador) => (
+          <div key={indicador} className="card" style={{ padding: '14px 18px', borderLeft: `4px solid ${COLORES[indicador]}` }}>
+            <span className="metricLabel">{ETIQUETAS[indicador]}</span>
+            <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: COLORES[indicador] }}>
+              {data ? formatPct(totalesSeleccion.porcentajes[indicador]) : '...'}
+            </span>
+            <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
+          </div>
+        ))}
       </div>
 
-      {/* Gráfico / Tabla */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div className="cardHeader">
-          <div className="cardTitle">
-            <HeartPulse className="w-4 h-4 text-emerald-400" />
-            <span>Distribución de Cobertura por Departamento</span>
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 8,
+          background: '#ffffff',
+          padding: '10px 16px',
+          borderRadius: 12,
+          border: '1px solid #cbd5e1',
+          alignItems: 'center',
+          marginTop: 12,
+        }}
+      >
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
+          INDICADOR A VISUALIZAR:
+        </span>
+        {INDICADORES.map((indicador) => (
+          <button
+            key={indicador}
+            onClick={() => setSelectedIndicador(indicador)}
+            aria-pressed={selectedIndicador === indicador}
+            style={{
+              border: '1px solid',
+              borderColor: selectedIndicador === indicador ? COLORES[indicador] : '#cbd5e1',
+              backgroundColor: selectedIndicador === indicador ? '#14203b' : '#f8fafc',
+              color: selectedIndicador === indicador ? '#ffffff' : '#334155',
+              padding: '6px 12px',
+              borderRadius: 8,
+              fontSize: '0.8rem',
+              fontWeight: selectedIndicador === indicador ? 700 : 500,
+              cursor: 'pointer',
+            }}
+          >
+            {ETIQUETAS[indicador]}
+          </button>
+        ))}
+      </div>
+
+      <div className="population-layout">
+        <div className="card" style={{ margin: 0, minWidth: 0 }}>
+          <div className="cardHeader">
+            <div className="cardTitle">
+              <HeartPulse className="w-4 h-4 text-emerald-400" />
+              <span>{ETIQUETAS[selectedIndicador]} por Municipio</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
+              <button
+                onClick={() => setViewMode('grafico')}
+                aria-pressed={viewMode === 'grafico'}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent', color: '#ffffff' }}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Gráfico
+              </button>
+              <button
+                onClick={() => setViewMode('tabla')}
+                aria-pressed={viewMode === 'tabla'}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent', color: '#ffffff' }}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                Tabla
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
-            <button
-              onClick={() => setViewMode('grafico')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Gráfico
-            </button>
-            <button
-              onClick={() => setViewMode('tabla')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              Tabla
-            </button>
-          </div>
-        </div>
-
-        <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
-          {loading ? (
-            <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando cobertura de salud...</span>
-            </div>
-          ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 620 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={datosGrafico}
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
-                >
-                  <XAxis
-                    type="number"
-                    domain={[0, 100]}
-                    tickFormatter={(v) => `${v}%`}
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    label={{
-                      value: 'Distribución porcentual de cobertura de salud (%)',
-                      position: 'insideBottom',
-                      offset: -18,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="departamento"
-                    width={140}
-                    stroke="#475569"
-                    fontSize={11}
-                    tickLine={false}
-                    label={{
-                      value: 'Departamento',
-                      angle: -90,
-                      position: 'insideLeft',
-                      offset: -10,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      style: { textAnchor: 'middle' },
-                    }}
-                  />
-                  <Tooltip
-                    formatter={(val: any, name: any) => [
-                      `${Number(val).toFixed(1).replace('.', ',')} %`,
-                      name === 'obra_social_pct'
-                        ? 'Obra Social / Prepaga / PAMI'
-                        : name === 'programas_pct'
-                        ? 'Programas Estatales'
-                        : 'Sin Cobertura',
-                    ]}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderRadius: 8,
-                      border: '1px solid #334155',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{
-                      color: '#ffffff',
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: '0.8rem',
-                    }}
-                    itemStyle={{
-                      color: '#34d399',
-                      fontWeight: 700,
-                      fontSize: '0.82rem',
-                    }}
-                  />
-                  <Legend
-                    verticalAlign="top"
-                    align="center"
-                    height={36}
-                    formatter={(val) =>
-                      val === 'obra_social_pct'
-                        ? 'Obra Social / Prepaga / PAMI'
-                        : val === 'programas_pct'
-                        ? 'Programas Estatales'
-                        : 'Sin Cobertura'
-                    }
-                  />
-                  <Bar dataKey="obra_social_pct" stackId="salud" fill="#047857" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="programas_pct" stackId="salud" fill="#2563eb" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="sin_cobertura_pct" stackId="salud" fill="#dc2626" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div
-              style={{
-                maxHeight: '480px',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    backgroundColor: '#ffffff',
-                    zIndex: 2,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}
-                >
-                  <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th 
-                      onClick={() => handleSort('departamento')}
-                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>Departamento</span>
-                        {renderSortIcon('departamento')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('poblacion')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Población Total</span>
-                        {renderSortIcon('poblacion')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('obra_social_pct')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% Obra Social / PAMI</span>
-                        {renderSortIcon('obra_social_pct')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('programas_pct')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% Programas Estatales</span>
-                        {renderSortIcon('programas_pct')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('sin_cobertura_pct')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% Sin Cobertura</span>
-                        {renderSortIcon('sin_cobertura_pct')}
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deptosTablaOrdenados.map((row: any, idx: number) => (
-                    <tr
-                      key={row.departamento || idx}
-                      style={{
-                        borderBottom: '1px solid #f1f5f9',
-                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
-                      }}
-                    >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.departamento}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
-                        {row.poblacion.toLocaleString('es-AR')}
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#047857' }}>
-                        {row.obra_social_pct.toFixed(1).replace('.', ',')} %
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#1d4ed8' }}>
-                        {row.programas_pct.toFixed(1).replace('.', ',')} %
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#b91c1c' }}>
-                        {row.sin_cobertura_pct.toFixed(1).replace('.', ',')} %
-                      </td>
+          <div className="cardBody" style={{ minHeight: 520, padding: 14 }}>
+            {loading ? (
+              <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span>Calculando cobertura de salud...</span>
+              </div>
+            ) : viewMode === 'grafico' ? (
+              datosGrafico.length > 0 ? (
+                <div style={{ maxHeight: 680, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                  <div style={{ minWidth: 560, height: Math.max(480, datosGrafico.length * 34), padding: '8px 8px 0 0' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        layout="vertical"
+                        data={datosGrafico}
+                        margin={{ top: 20, right: 76, left: 16, bottom: 42 }}
+                      >
+                        <XAxis
+                          type="number"
+                          domain={[0, 100]}
+                          tickFormatter={(value) => `${value}%`}
+                          stroke="#94a3b8"
+                          fontSize={11}
+                          label={{
+                            value: `${ETIQUETAS[selectedIndicador]} (%)`,
+                            position: 'insideBottom',
+                            offset: -20,
+                            fill: '#64748b',
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="municipio_label"
+                          width={178}
+                          stroke="#475569"
+                          fontSize={10}
+                          tickLine={false}
+                          tickMargin={8}
+                        />
+                        <Tooltip
+                          formatter={(value) => [formatPct(Number(value)), ETIQUETAS[selectedIndicador]]}
+                          labelFormatter={(label) => {
+                            const municipio = datosGrafico.find((row) => row.municipio_label === label);
+                            return municipio ? `${municipio.municipio} · ${municipio.departamento}` : label;
+                          }}
+                          contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: '1px solid #334155', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)', padding: '8px 12px' }}
+                          labelStyle={{ color: '#ffffff', fontWeight: 600, marginBottom: 4, fontSize: '0.8rem' }}
+                          itemStyle={{ color: COLORES[selectedIndicador], fontWeight: 700, fontSize: '0.82rem' }}
+                        />
+                        <Bar dataKey={selectedIndicador} fill={COLORES[selectedIndicador]} radius={[0, 4, 4, 0]}>
+                          <LabelList
+                            dataKey={selectedIndicador}
+                            position="right"
+                            formatter={(value) => formatPct(Number(value))}
+                            fill={COLORES[selectedIndicador]}
+                            fontSize={10}
+                            fontWeight={600}
+                          />
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: 32, textAlign: 'center', color: '#64748b' }}>
+                  No hay municipios seleccionados.
+                </div>
+              )
+            ) : (
+              <div style={{ maxHeight: 600, overflow: 'auto', borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead style={{ position: 'sticky', top: 0, backgroundColor: '#ffffff', zIndex: 2, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
+                    <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      {([
+                        ['departamento', 'Departamento'],
+                        ['municipio', 'Municipio'],
+                        ['poblacion', 'Población'],
+                        ['obra_social_pct', 'Obra Social / PAMI'],
+                        ['programas_pct', 'Programas Estatales'],
+                        ['sin_cobertura_pct', 'Sin Cobertura'],
+                      ] as [SortField, string][]).map(([field, label]) => (
+                        <th key={field} onClick={() => handleSort(field)} style={{ padding: '10px 12px', textAlign: field === 'departamento' || field === 'municipio' ? 'left' : 'right', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>{label}{renderSortIcon(field)}</span>
+                        </th>
+                      ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {datosTabla.map((row) => (
+                      <tr key={municipioKey(row)} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '8px 12px', color: '#64748b' }}>{row.departamento}</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{row.municipio}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.poblacion.toLocaleString('es-AR')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: COLORES.obra_social_pct }}>{formatPct(row.obra_social_pct)}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: COLORES.programas_pct }}>{formatPct(row.programas_pct)}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: COLORES.sin_cobertura_pct }}>{formatPct(row.sin_cobertura_pct)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
+
+        <aside className="card population-filter-panel" style={{ margin: 0, padding: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#14203b' }}>Departamentos / Municipios</span>
+            <span style={{ fontSize: '0.7rem', color: '#64748b', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>
+              {selectedMunicipios === null ? municipios.length : selectedMunicipios.length}/{municipios.length}
+            </span>
+          </div>
+
+          <div className="population-search">
+            <Search className="text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar depto. o municipio..."
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+            />
+          </div>
+
+          <div style={{ marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid #f1f5f9' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>
+              <input type="checkbox" checked={mostrarSeleccionCompleta} onChange={handleSelectAll} />
+              <span>Seleccionar todo</span>
+            </label>
+          </div>
+
+          <div className="population-filter-list">
+            {gruposFiltrados.map((grupo) => {
+              const municipiosDepartamento = municipios.filter((municipio) =>
+                (municipio.departamento || 'Sin departamento') === grupo.departamento,
+              );
+              const nombresMunicipios = municipiosDepartamento.map(municipioKey);
+              const municipiosSeleccionados = municipiosDepartamento.filter((municipio) =>
+                selectedMunicipios === null || selectedMunicipios.includes(municipioKey(municipio)),
+              ).length;
+              const todosSeleccionados = municipiosSeleccionados === nombresMunicipios.length;
+
+              return (
+                <div key={grupo.departamento}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.74rem', color: '#14203b', cursor: 'pointer', fontWeight: 700 }}>
+                    <input
+                      type="checkbox"
+                      checked={todosSeleccionados}
+                      ref={(element) => {
+                        if (element) element.indeterminate = municipiosSeleccionados > 0 && !todosSeleccionados;
+                      }}
+                      onChange={() => handleToggleDepartamento(grupo.departamento)}
+                    />
+                    <span>{grupo.departamento}</span>
+                  </label>
+                  <div style={{ margin: '5px 0 8px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {grupo.municipios.map((municipio) => (
+                      <label key={municipio.municipio} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedMunicipios === null || selectedMunicipios.includes(municipioKey(municipio))}
+                          onChange={() => handleToggleMunicipio(municipioKey(municipio))}
+                        />
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {municipio.municipio}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
       </div>
     </div>
   );

@@ -21,12 +21,57 @@ import {
   YAxis,
   Tooltip,
   Legend,
+  LabelList,
 } from 'recharts';
 
 type SortField = 'grupo_edad' | 'hombres' | 'mujeres' | 'total';
 type SortOrder = 'asc' | 'desc';
 
 const ANIOS_DISPONIBLES = ['1980', '1991', '2001', '2010', '2022'];
+
+type BarLabelProps = {
+  x?: number | string;
+  y?: number | string;
+  width?: number | string;
+  height?: number | string;
+  value?: unknown;
+};
+
+function renderBarLabel(props: BarLabelProps, color: string, side: 'left' | 'right') {
+  const { x, y, width, height, value } = props;
+  const barX = Number(x);
+  const barY = Number(y);
+  const barWidth = Number(width);
+  const barHeight = Number(height);
+  if (
+    (typeof value !== 'number' && typeof value !== 'string') ||
+    ![barX, barY, barWidth, barHeight].every(Number.isFinite)
+  ) return null;
+
+  const text = Math.abs(Number(value)).toLocaleString('es-AR');
+  const fitsInside = Math.abs(barWidth) >= text.length * 6 + 8;
+  const labelX = fitsInside
+    ? side === 'left' ? barX + barWidth + 6 : barX + barWidth - 6
+    : side === 'left' ? barX + barWidth - 14 : barX + barWidth + 14;
+  const textAnchor = fitsInside
+    ? side === 'left' ? 'start' : 'end'
+    : side === 'left' ? 'end' : 'start';
+
+  return (
+    <text
+      x={labelX}
+      y={barY + barHeight / 2}
+      dy="0.35em"
+      textAnchor={textAnchor}
+      fill={fitsInside ? '#ffffff' : color}
+      fontSize={9}
+      fontWeight={600}
+      pointerEvents="none"
+    >
+      {text}
+    </text>
+  );
+}
 
 export default function PiramidePage() {
   const [selectedYear, setSelectedYear] = useState('2022');
@@ -56,9 +101,9 @@ export default function PiramidePage() {
 
   const piramideOriginal = data?.data || [];
 
-  // Datos fijos para el gráfico: preserva el orden etario original (0-4 hasta 100 y más)
+  // El gráfico muestra las edades mayores arriba y las más chicas abajo.
   const datosGrafico = useMemo(() => {
-    return [...piramideOriginal];
+    return [...piramideOriginal].reverse();
   }, [piramideOriginal]);
 
   const handleSort = (field: SortField) => {
@@ -332,8 +377,12 @@ export default function PiramidePage() {
                     height={36}
                     formatter={(val) => (val === 'hombresGrafico' ? 'Varones' : 'Mujeres')}
                   />
-                  <Bar dataKey="hombresGrafico" stackId="piramide" fill="#1e3a8a" radius={[4, 0, 0, 4]} />
-                  <Bar dataKey="mujeres" stackId="piramide" fill="#047857" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="hombresGrafico" stackId="piramide" fill="#1e3a8a" radius={[4, 0, 0, 4]}>
+                    <LabelList content={(props) => renderBarLabel(props, '#1e3a8a', 'left')} />
+                  </Bar>
+                  <Bar dataKey="mujeres" stackId="piramide" fill="#047857" radius={[0, 4, 4, 0]}>
+                    <LabelList content={(props) => renderBarLabel(props, '#047857', 'right')} />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>

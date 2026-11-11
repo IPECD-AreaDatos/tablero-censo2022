@@ -1,69 +1,96 @@
 import { NextResponse } from 'next/server';
-import { queryDwh } from '@/lib/db';
+import { queryDatalake } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    const [comparativaRows, deptosRows] = await Promise.all([
-      queryDwh(`
-        SELECT
-          division_geo,
-          "obra_social_PAMI"::numeric AS con_cobertura,
-          "sin_cobertura"::numeric AS sin_cobertura,
-          "programas_estatales"::numeric AS programas_estatales
-        FROM censo_nea_nacion_cobertura_salud
-      `),
-      queryDwh(`
-        SELECT
-          departamento,
-          poblacion_2022::bigint AS poblacion,
-          "población_en_vivienda_obra_social_o_prepaga_incluye_pami"::numeric AS obra_social_pct,
-          "población_en_vivienda_programas_o_planes_estatales_de_salud"::numeric AS programas_pct,
-          "población_en_viv_no_tiene_obra_social_prepaga_ni_plan_estatal"::numeric AS sin_cobertura_pct
-        FROM censo_ipecd_departamentos
-        WHERE LOWER(departamento) NOT LIKE '%total%'
-        ORDER BY poblacion_2022 DESC
-      `),
-    ]);
+    const rows = await queryDatalake(`
+      SELECT
+        p.depto_p18 AS departamento,
+        p.municipio_p1 AS municipio,
+        SUM(c.total_poblacion)::bigint AS poblacion,
+        SUM(c.obra_social_prepaga_pami)::bigint AS obra_social,
+        SUM(c.programas_estatales_salud)::bigint AS programas,
+        SUM(c.sin_obra_social_ni_plan_estatal)::bigint AS sin_cobertura
+      FROM base_cobertura_salud c
+      INNER JOIN base_p18_corrientes p ON c.codigo = p.codigo_p18
+      GROUP BY p.depto_p18, p.municipio_p1
+      ORDER BY poblacion DESC
+    `);
 
-    const totalPoblacion = deptosRows.reduce((total, row) => total + (Number(row.poblacion) || 0), 0);
+    const normalize = (value: string) => value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+    const municipiosAgrupados = new Map<string, {
+      departamento: string;
+      municipio: string;
+      poblacion: number;
+      obra_social: number;
+      programas: number;
+      sin_cobertura: number;
+    }>();
 
-    const formatPct = (val: any) => {
-      if (val === undefined || val === null) return '—';
-      let num = Number(val);
-      if (isNaN(num)) return '—';
-      if (num > 0 && num <= 1) num *= 100;
-      return `${num.toFixed(1).replace('.', ',')} %`;
-    };
+    for (const row of rows) {
+      const key = `${normalize(row.departamento)}::${normalize(row.municipio)}`;
+      const actual = municipiosAgrupados.get(key) || {
+        departamento: row.departamento,
+        municipio: row.municipio,
+        poblacion: 0,
+        obra_social: 0,
+        programas: 0,
+        sin_cobertura: 0,
+      };
+      actual.poblacion += Number(row.poblacion) || 0;
+      actual.obra_social += Number(row.obra_social) || 0;
+      actual.programas += Number(row.programas) || 0;
+      actual.sin_cobertura += Number(row.sin_cobertura) || 0;
+      municipiosAgrupados.set(key, actual);
+    }
 
-    const cleanStr = (s: string) =>
-      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const municipiosBase = Array.from(municipiosAgrupados.values())
+      .sort((a, b) => b.poblacion - a.poblacion);
+    const totales = municipiosBase.reduce((acc, row) => ({
+      poblacion: acc.poblacion + row.poblacion,
+      obra_social: acc.obra_social + row.obra_social,
+      programas: acc.programas + row.programas,
+      sin_cobertura: acc.sin_cobertura + row.sin_cobertura,
+    }), { poblacion: 0, obra_social: 0, programas: 0, sin_cobertura: 0 });
 
-    const corrientes = comparativaRows.find((row) => cleanStr(row.division_geo).includes('corrientes'));
+    const formatPct = (value: number) => totales.poblacion > 0
+      ? `${((value / totales.poblacion) * 100).toFixed(1).replace('.', ',')} %`
+      : '0,0 %';
+
+    const municipios = municipiosBase.map((row) => {
+      const poblacion = row.poblacion;
+      const obraSocial = row.obra_social;
+      const programas = row.programas;
+      const sinCobertura = row.sin_cobertura;
+      const porcentaje = (value: number) => poblacion > 0 ? (value / poblacion) * 100 : 0;
+
+      return {
+        departamento: row.departamento,
+        municipio: row.municipio,
+        poblacion,
+        obra_social: obraSocial,
+        programas,
+        sin_cobertura: sinCobertura,
+        obra_social_pct: porcentaje(obraSocial),
+        programas_pct: porcentaje(programas),
+        sin_cobertura_pct: porcentaje(sinCobertura),
+      };
+    });
 
     return NextResponse.json({
       totalesProvincia: {
-        totalPoblacion,
-        pctObraSocial: formatPct(corrientes?.con_cobertura),
-        pctProgramas: formatPct(corrientes?.programas_estatales),
-        pctSinCobertura: formatPct(corrientes?.sin_cobertura),
+        totalPoblacion: totales.poblacion,
+        pctObraSocial: formatPct(totales.obra_social),
+        pctProgramas: formatPct(totales.programas),
+        pctSinCobertura: formatPct(totales.sin_cobertura),
       },
-      comparativa: comparativaRows,
-      departamentos: deptosRows.map((row) => {
-        const pob = Number(row.poblacion) || 0;
-        const os = Number(row.obra_social_pct) || 0;
-        const pr = Number(row.programas_pct) || 0;
-        const sc = Number(row.sin_cobertura_pct) || 0;
-
-        return {
-          departamento: row.departamento,
-          poblacion: pob,
-          obra_social_pct: os,
-          programas_pct: pr,
-          sin_cobertura_pct: sc,
-        };
-      }),
+      municipios,
     });
   } catch (error) {
     console.error('Error al consultar cobertura de salud:', error);
