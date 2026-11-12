@@ -13,6 +13,7 @@ import {
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
+import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import {
   ResponsiveContainer,
   BarChart,
@@ -25,12 +26,38 @@ import {
 type NivelClima = 'muy_bajo' | 'bajo' | 'medio' | 'alto' | 'muy_alto';
 type SortField = 'nombre' | 'total_hogares' | 'valor_clima' | 'pct_clima';
 type SortOrder = 'asc' | 'desc';
+type ClimaTerritory = {
+  departamento: string;
+  municipio: string;
+  nombre: string;
+  total_hogares: number;
+  muy_bajo: number;
+  bajo: number;
+  medio: number;
+  alto: number;
+  muy_alto: number;
+  pct_muy_bajo: string;
+  pct_bajo: string;
+  pct_medio: string;
+  pct_alto: string;
+  pct_muy_alto: string;
+};
+type VisibleClimaTerritory = ClimaTerritory & { locationKey: string };
+type ClimaData = {
+  totalHogares: number;
+  kpis: { pctProv: string; pctPais: string; pctNea: string };
+  detalle: ClimaTerritory[];
+};
+
+const EMPTY_TERRITORIES: ClimaTerritory[] = [];
 
 export default function ClimaEducativoPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<ClimaData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedClima, setSelectedClima] = useState<NivelClima>('medio');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [scope, setScope] = useState<'departamento' | 'municipio'>('departamento');
+  const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Ordenamiento exclusivo de la tabla
   const [sortField, setSortField] = useState<SortField>('valor_clima');
@@ -52,7 +79,11 @@ export default function ClimaEducativoPage() {
     load();
   }, []);
 
-  const detalleOriginal = data?.detalle || [];
+  const detalleOriginal = useMemo(() => data?.detalle ?? EMPTY_TERRITORIES, [data]);
+  const detalleFiltrado = useMemo(
+    () => detalleOriginal.filter((territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory))),
+    [detalleOriginal, selectedLocations],
+  );
 
   const labelsClima: Record<NivelClima, string> = {
     muy_bajo: 'Clima Muy Bajo',
@@ -62,13 +93,62 @@ export default function ClimaEducativoPage() {
     muy_alto: 'Clima Muy Alto',
   };
 
-  // Datos fijos del gráfico: siempre ordenados de mayor a menor por la categoría seleccionada
-  const datosGrafico = useMemo(() => {
-    if (!detalleOriginal.length) return [];
-    return [...detalleOriginal]
-      .sort((a: any, b: any) => (Number(b[selectedClima]) || 0) - (Number(a[selectedClima]) || 0))
-      .slice(0, 25);
-  }, [detalleOriginal, selectedClima]);
+  const territoriosVisibles = useMemo<VisibleClimaTerritory[]>(() => {
+    if (scope === 'municipio') {
+      return detalleFiltrado.map((territory) => ({
+        ...territory,
+        locationKey: territoryKey(territory),
+      }));
+    }
+
+    const grouped = new Map<string, VisibleClimaTerritory>();
+    for (const territory of detalleFiltrado) {
+      const current = grouped.get(territory.departamento) || {
+        departamento: territory.departamento,
+        municipio: '',
+        nombre: territory.departamento,
+        locationKey: territory.departamento,
+        total_hogares: 0,
+        muy_bajo: 0,
+        bajo: 0,
+        medio: 0,
+        alto: 0,
+        muy_alto: 0,
+        pct_muy_bajo: '0',
+        pct_bajo: '0',
+        pct_medio: '0',
+        pct_alto: '0',
+        pct_muy_alto: '0',
+      };
+      current.total_hogares += territory.total_hogares;
+      current.muy_bajo += territory.muy_bajo;
+      current.bajo += territory.bajo;
+      current.medio += territory.medio;
+      current.alto += territory.alto;
+      current.muy_alto += territory.muy_alto;
+      grouped.set(territory.departamento, current);
+    }
+
+    return Array.from(grouped.values()).map((territory) => ({
+      ...territory,
+      pct_muy_bajo: territory.total_hogares > 0 ? ((territory.muy_bajo / territory.total_hogares) * 100).toFixed(1) : '0',
+      pct_bajo: territory.total_hogares > 0 ? ((territory.bajo / territory.total_hogares) * 100).toFixed(1) : '0',
+      pct_medio: territory.total_hogares > 0 ? ((territory.medio / territory.total_hogares) * 100).toFixed(1) : '0',
+      pct_alto: territory.total_hogares > 0 ? ((territory.alto / territory.total_hogares) * 100).toFixed(1) : '0',
+      pct_muy_alto: territory.total_hogares > 0 ? ((territory.muy_alto / territory.total_hogares) * 100).toFixed(1) : '0',
+    }));
+  }, [detalleFiltrado, scope]);
+
+  const totalSeleccionado = detalleFiltrado.reduce((total, territory) => total + territory.total_hogares, 0);
+  const hogaresClimaMedioSeleccionado = detalleFiltrado.reduce((total, territory) => total + territory.medio, 0);
+  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+  const pctClimaProvincia = totalSeleccionado > 0
+    ? `${((hogaresClimaMedioSeleccionado / totalSeleccionado) * 100).toFixed(1).replace('.', ',')} %`
+    : '0,0 %';
+
+  const datosGrafico = useMemo(() => [...territoriosVisibles]
+    .sort((a, b) => b[selectedClima] - a[selectedClima])
+    .slice(0, 25), [territoriosVisibles, selectedClima]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -101,31 +181,19 @@ export default function ClimaEducativoPage() {
 
   // Datos ordenados exclusivamente para la tabla
   const detalleTablaOrdenado = useMemo(() => {
-    if (!detalleOriginal.length) return [];
-    return [...detalleOriginal].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
+    if (!territoriosVisibles.length) return [];
+    return [...territoriosVisibles].sort((a, b) => {
       if (sortField === 'nombre') {
-        aVal = (a.nombre || '').toLowerCase();
-        bVal = (b.nombre || '').toLowerCase();
+        const aVal = a.nombre.toLowerCase();
+        const bVal = b.nombre.toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      if (sortField === 'total_hogares') {
-        aVal = Number(a.total_hogares) || 0;
-        bVal = Number(b.total_hogares) || 0;
-      } else if (sortField === 'valor_clima') {
-        aVal = Number(a[selectedClima]) || 0;
-        bVal = Number(b[selectedClima]) || 0;
-      } else if (sortField === 'pct_clima') {
-        aVal = Number(a[`pct_${selectedClima}`]) || 0;
-        bVal = Number(b[`pct_${selectedClima}`]) || 0;
-      }
-
+      const aVal = sortField === 'total_hogares' ? a.total_hogares : sortField === 'valor_clima' ? a[selectedClima] : Number(a[`pct_${selectedClima}`]);
+      const bVal = sortField === 'total_hogares' ? b.total_hogares : sortField === 'valor_clima' ? b[selectedClima] : Number(b[`pct_${selectedClima}`]);
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [detalleOriginal, sortField, sortOrder, selectedClima]);
+  }, [territoriosVisibles, sortField, sortOrder, selectedClima]);
 
   return (
     <div className="container">
@@ -143,21 +211,21 @@ export default function ClimaEducativoPage() {
       </div>
 
       {/* KPIs Calculados Dinámicamente desde Base de Datos */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Total Hogares Relevados</span>
+          <span className="metricLabel">{seleccionCompleta ? 'Total Hogares Relevados' : 'Hogares seleccionados'}</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {data ? data.totalHogares.toLocaleString('es-AR') : '...'}
+            {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincial Calculado</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #10b981' }}>
-          <span className="metricLabel">% Clima Medio (Provincia)</span>
+          <span className="metricLabel">% Clima Medio ({seleccionCompleta ? 'Provincia' : 'Selección'})</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {data?.kpis?.pctProv || '...'}
+            {pctClimaProvincia || '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Corrientes' : 'Territorios seleccionados'}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6' }}>
@@ -215,11 +283,12 @@ export default function ClimaEducativoPage() {
       </div>
 
       {/* Gráfico / Tabla */}
-      <div className="card" style={{ marginTop: 12 }}>
+      <div className="population-layout">
+      <div className="card" style={{ margin: 0 }}>
         <div className="cardHeader">
           <div className="cardTitle">
             <GraduationCap className="w-4 h-4 text-emerald-400" />
-            <span>Distribución de {labelsClima[selectedClima]} por Territorio</span>
+            <span>Distribución de {labelsClima[selectedClima]} por {scope}</span>
           </div>
 
           <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -265,6 +334,21 @@ export default function ClimaEducativoPage() {
         </div>
 
         <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Ver por</span>
+            <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 8, background: '#f1f5f9' }}>
+              {(['departamento', 'municipio'] as const).map((nivel) => (
+                <button
+                  key={nivel}
+                  onClick={() => setScope(nivel)}
+                  aria-pressed={scope === nivel}
+                  style={{ border: 0, borderRadius: 6, padding: '7px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', background: scope === nivel ? '#14203b' : 'transparent', color: scope === nivel ? '#fff' : '#475569' }}
+                >
+                  {nivel}
+                </button>
+              ))}
+            </div>
+          </div>
           {loading ? (
             <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
               <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
@@ -295,12 +379,12 @@ export default function ClimaEducativoPage() {
                   <YAxis
                     type="category"
                     dataKey="nombre"
-                    width={150}
+                    width={175}
                     stroke="#475569"
                     fontSize={11}
                     tickLine={false}
                     label={{
-                      value: 'Territorio / Área',
+                      value: scope === 'departamento' ? 'Departamento' : 'Municipio',
                       angle: -90,
                       position: 'insideLeft',
                       offset: -10,
@@ -311,8 +395,8 @@ export default function ClimaEducativoPage() {
                     }}
                   />
                   <Tooltip
-                    formatter={(val: any) => [
-                      `${Number(val).toLocaleString('es-AR')} hogares`,
+                    formatter={(value) => [
+                      `${Number(value).toLocaleString('es-AR')} hogares`,
                       labelsClima[selectedClima],
                     ]}
                     contentStyle={{
@@ -398,9 +482,9 @@ export default function ClimaEducativoPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {detalleTablaOrdenado.map((row: any, idx: number) => (
+                  {detalleTablaOrdenado.map((row, idx: number) => (
                     <tr
-                      key={row.codigo || idx}
+                      key={row.locationKey || idx}
                       style={{
                         borderBottom: '1px solid #f1f5f9',
                         backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
@@ -421,6 +505,12 @@ export default function ClimaEducativoPage() {
             </div>
           )}
         </div>
+      </div>
+      <TerritoryFilter
+        territories={detalleOriginal}
+        selectedKeys={selectedLocations}
+        onSelectionChange={setSelectedLocations}
+      />
       </div>
     </div>
   );

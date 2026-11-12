@@ -1,12 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { queryDwh, queryDatalake } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+type ComparativaClima = {
+  division_geo: string;
+  clima_muy_bajo: number | string | null;
+  clima_bajo: number | string | null;
+  clima_medio: number | string | null;
+  clima_alto: number | string | null;
+  clima_muy_alto: number | string | null;
+  no_corresponde: number | string | null;
+};
+type FilaClimaTerritorial = {
+  departamento: string;
+  municipio: string;
+  muy_bajo: number | string | null;
+  bajo: number | string | null;
+  medio: number | string | null;
+  alto: number | string | null;
+  muy_alto: number | string | null;
+  total_hogares: number | string | null;
+};
+
+export async function GET() {
   try {
     // 1. Comparativas País, NEA y Corrientes
-    const rowsComparativa = await queryDwh(`
+    const rowsComparativa = await queryDwh<ComparativaClima>(`
       SELECT 
         division_geo,
         clima_muy_bajo::numeric as clima_muy_bajo,
@@ -18,11 +38,8 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_clima_educativo
     `);
 
-    // Log para ver en la terminal cómo figuran exactamente los nombres en la base
-    console.log('Filas censo_nea_nacion_clima_educativo:', rowsComparativa);
-
     // Función auxiliar para formatear a porcentaje real (si viene 0.294 -> 29,4 %)
-    const formatPct = (val: any) => {
+    const formatPct = (val: number | string | null | undefined) => {
       if (val === undefined || val === null) return '—';
       let num = Number(val);
       if (isNaN(num)) return '—';
@@ -39,17 +56,18 @@ export async function GET(request: NextRequest) {
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '');
 
-    const filaProv = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('corrientes'));
-    const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
-    const filaPais = rowsComparativa.find((c: any) => {
+    const filaProv = rowsComparativa.find((c) => cleanStr(c.division_geo).includes('corrientes'));
+    const filaNea = rowsComparativa.find((c) => cleanStr(c.division_geo).includes('nea'));
+    const filaPais = rowsComparativa.find((c) => {
       const nom = cleanStr(c.division_geo);
       return nom.includes('pais') || nom.includes('total') || nom.includes('nacion');
     });
 
     // 2. Detalle territorial consolidado por municipio/departamento
-    const rowsDetalle = await queryDatalake(`
+    const rowsDetalle = await queryDatalake<FilaClimaTerritorial>(`
       SELECT 
-        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+        COALESCE(p.depto_p18, 'Sin departamento') as departamento,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin municipio') as municipio,
         SUM(b.clima_muy_bajo)::bigint as muy_bajo,
         SUM(b.clima_bajo)::bigint as bajo,
         SUM(b.clima_medio)::bigint as medio,
@@ -58,7 +76,7 @@ export async function GET(request: NextRequest) {
         SUM(b.total_viviendas)::bigint as total_hogares
       FROM base_clima_educativo_hogar b
       INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-      GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+      GROUP BY COALESCE(p.depto_p18, 'Sin departamento'), COALESCE(p.municipio_p1, p.depto_p18, 'Sin municipio')
       ORDER BY total_hogares DESC
     `);
 
@@ -80,7 +98,9 @@ export async function GET(request: NextRequest) {
         const a = Number(r.alto) || 0;
         const ma = Number(r.muy_alto) || 0;
         return {
-          nombre: r.nombre,
+          departamento: r.departamento,
+          municipio: r.municipio,
+          nombre: r.municipio,
           total_hogares: tot,
           muy_bajo: mb,
           bajo: b,

@@ -1,89 +1,100 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { queryDwh } from '@/lib/db';
+import { NextResponse } from 'next/server';
+import { queryDwh, queryDatalake } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+const niveles = [
+  { key: 'secundaria_incompleta', label: 'Secundaria incompleta' },
+  { key: 'secundaria_completa', label: 'Secundaria completa' },
+  { key: 'superior_completo', label: 'Superior / universitario completo' },
+] as const;
+
+type NivelKey = typeof niveles[number]['key'];
+type FilaComparativa = {
+  division_geo: string;
+  secundario_incompleto: number | string | null;
+  secundario_completo: number | string | null;
+  terciario_completo: number | string | null;
+  universitario_completo: number | string | null;
+  posgrado_completo: number | string | null;
+};
+type FilaTerritorio = {
+  departamento: string;
+  municipio: string;
+  poblacion_2022: number | string;
+  secundaria_incompleta: number | string | null;
+  secundaria_completa: number | string | null;
+  superior_completo: number | string | null;
+};
+
+export async function GET() {
   try {
-    // 1. Departamentos y asistencia escolar desde censo_ipecd_departamentos
-    let rowsDeptos = [];
-    try {
-      rowsDeptos = await queryDwh(`
-        SELECT 
-          departamento,
-          poblacion_2022::bigint as poblacion_2022,
-          "población_que_asiste_a_institución_educativa"::bigint as asiste,
-          "población_que_no_asiste_pero_asistio_a_institución_educativa"::bigint as asistio,
-          "población_que_nunca_asistio_a_institución_educativa"::bigint as nunca_asistio
-        FROM censo_ipecd_departamentos
-        WHERE LOWER(departamento) NOT LIKE '%total%'
+    const [rowsDeptos, rowsComparativa] = await Promise.all([
+      queryDatalake<FilaTerritorio>(`
+        SELECT
+          COALESCE(p.depto_p18, 'Sin departamento') AS departamento,
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin municipio') AS municipio,
+          SUM(b.total_poblacion)::bigint AS poblacion_2022,
+          SUM(b.secundario_incompleto)::bigint AS secundaria_incompleta,
+          SUM(b.secundario_completo)::bigint AS secundaria_completa,
+          SUM(b.terciario_completo + b.universitario_completo + b.posgrado_completo)::bigint AS superior_completo
+        FROM base_nivel_educativo_mayores_25 b
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY COALESCE(p.depto_p18, 'Sin departamento'), COALESCE(p.municipio_p1, p.depto_p18, 'Sin municipio')
         ORDER BY poblacion_2022 DESC
-      `);
-    } catch (errDepto) {
-      console.warn('Fallback en consulta de departamentos:', errDepto);
-      rowsDeptos = await queryDwh(`
-        SELECT departamento, poblacion_2022::bigint as poblacion_2022
-        FROM censo_ipecd_departamentos
-        WHERE LOWER(departamento) NOT LIKE '%total%'
-        ORDER BY poblacion_2022 DESC
-      `);
-    }
+      `),
+      queryDwh<FilaComparativa>(`
+        SELECT
+          division_geo,
+          secundario_incompleto,
+          secundario_completo,
+          terciario_completo,
+          universitario_completo,
+          posgrado_completo
+        FROM censo_nea_nacion_nivel_educativo_mayores_25
+      `),
+    ]);
 
-    // 2. Consulta de comparativa nacional/regional
-    let rowsComparativa: any[] = [];
-    try {
-      rowsComparativa = await queryDwh(`
-        SELECT * FROM censo_nea_nacion_nivel_educativo_mayores_25
-      `);
-    } catch (e) {
-      console.warn('Tabla censo_nea_nacion_nivel_educativo_mayores_25 no disponible:', e);
-    }
-
-    const cleanStr = (s: string) =>
-      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-    const formatPct = (val: any) => {
-      if (val === undefined || val === null) return '—';
-      let num = Number(val);
-      if (isNaN(num)) return '—';
-      if (num > 0 && num <= 1) num *= 100;
-      return `${num.toFixed(1).replace('.', ',')} %`;
+    const cleanStr = (value: string) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const comparativa = {
+      provincia: rowsComparativa.find((row) => cleanStr(row.division_geo).includes('corrientes')),
+      pais: rowsComparativa.find((row) => {
+        const division = cleanStr(row.division_geo);
+        return division.includes('pais') || division.includes('nacion') || division.includes('total');
+      }),
+      nea: rowsComparativa.find((row) => cleanStr(row.division_geo).includes('nea')),
+    };
+    const valorComparativo = (row: FilaComparativa | undefined, nivel: NivelKey) => {
+      if (!row) return null;
+      if (nivel === 'secundaria_incompleta') return Number(row.secundario_incompleto);
+      if (nivel === 'secundaria_completa') return Number(row.secundario_completo);
+      return Number(row.terciario_completo) + Number(row.universitario_completo) + Number(row.posgrado_completo);
     };
 
-    const filaProv = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('corrientes'));
-    const filaPais = rowsComparativa.find((c: any) => {
-      const n = cleanStr(c.division_geo);
-      return n.includes('pais') || n.includes('total') || n.includes('nacion');
+    const territorios = rowsDeptos.map((row) => {
+      const poblacion = Number(row.poblacion_2022) || 0;
+      return {
+        departamento: row.departamento,
+        municipio: row.municipio,
+        poblacion_2022: poblacion,
+        secundaria_incompleta: Number(row.secundaria_incompleta) || 0,
+        secundaria_completa: Number(row.secundaria_completa) || 0,
+        superior_completo: Number(row.superior_completo) || 0,
+        pct_secundaria_incompleta: poblacion > 0 ? (Number(row.secundaria_incompleta) / poblacion) * 100 : 0,
+        pct_secundaria_completa: poblacion > 0 ? (Number(row.secundaria_completa) / poblacion) * 100 : 0,
+        pct_superior_completo: poblacion > 0 ? (Number(row.superior_completo) / poblacion) * 100 : 0,
+      };
     });
-    const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
-
-    const totalMayores25Prov = rowsDeptos.reduce((acc, r: any) => acc + (Number(r.poblacion_2022) || 0), 0);
+    const totalMayores25Prov = territorios.reduce((total, row) => total + row.poblacion_2022, 0);
 
     return NextResponse.json({
-      kpisProvincia: {
-        totalMayores25: totalMayores25Prov > 0 ? Math.round(totalMayores25Prov * 0.588).toLocaleString('es-AR') : '710.991',
-        pctSecundariaCompletaProv: formatPct(filaProv?.secundaria_completa || filaProv?.['Secundaria_Completa'] || 31.3),
-        pctSecundariaCompletaPais: formatPct(filaPais?.secundaria_completa || filaPais?.['Secundaria_Completa'] || 34.7),
-        pctSecundariaCompletaNea: formatPct(filaNea?.secundaria_completa || filaNea?.['Secundaria_Completa'] || 29.6),
-      },
-      departamentos: rowsDeptos.map((r: any) => {
-        const pob = Number(r.poblacion_2022) || 0;
-        const asiste = Number(r.asiste) || Math.round(pob * 0.28);
-        const asistio = Number(r.asistio) || Math.round(pob * 0.68);
-        const nunca = Number(r.nunca_asistio) || Math.round(pob * 0.04);
-        const sumTotal = asiste + asistio + nunca || 1;
-
-        return {
-          departamento: r.departamento,
-          poblacion_2022: pob,
-          asiste,
-          asistio,
-          nunca_asistio: nunca,
-          pct_asiste: ((asiste / sumTotal) * 100).toFixed(1),
-          pct_asistio: ((asistio / sumTotal) * 100).toFixed(1),
-          pct_nunca_asistio: ((nunca / sumTotal) * 100).toFixed(1),
-        };
-      }),
+      niveles,
+      totalMayores25: totalMayores25Prov,
+      comparativa: Object.fromEntries(Object.entries(comparativa).map(([region, row]) => [
+        region,
+        Object.fromEntries(niveles.map(({ key }) => [key, valorComparativo(row, key)])),
+      ])),
+      territorios,
     });
   } catch (error) {
     console.error('Error general en API educacion:', error);

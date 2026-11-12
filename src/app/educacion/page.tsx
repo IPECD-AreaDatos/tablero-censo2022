@@ -13,6 +13,7 @@ import {
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
+import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import {
   ResponsiveContainer,
   BarChart,
@@ -20,28 +21,61 @@ import {
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
+  LabelList,
 } from 'recharts';
 
-type SortField = 'departamento' | 'poblacion_2022' | 'asiste' | 'asistio' | 'nunca_asistio';
+type NivelEducativo = 'secundaria_incompleta' | 'secundaria_completa' | 'superior_completo';
+type SortField = 'departamento' | 'municipio' | 'poblacion_2022' | 'valor' | 'porcentaje';
 type SortOrder = 'asc' | 'desc';
+type TerritorioEducacion = {
+  departamento: string;
+  municipio: string;
+  poblacion_2022: number;
+  secundaria_incompleta: number;
+  secundaria_completa: number;
+  superior_completo: number;
+  pct_secundaria_incompleta: number;
+  pct_secundaria_completa: number;
+  pct_superior_completo: number;
+};
+type EducacionData = {
+  totalMayores25: number;
+  comparativa: Record<'provincia' | 'pais' | 'nea', Record<NivelEducativo, number | null>>;
+  territorios: TerritorioEducacion[];
+};
+
+const nivelesEducativos: { key: NivelEducativo; label: string }[] = [
+  { key: 'secundaria_incompleta', label: 'Secundaria incompleta' },
+  { key: 'secundaria_completa', label: 'Secundaria completa' },
+  { key: 'superior_completo', label: 'Superior / universitario completo' },
+];
+const EMPTY_TERRITORIOS: TerritorioEducacion[] = [];
+
+type TerritorioVisible = TerritorioEducacion & { nombre: string; locationKey: string; valor: number; porcentaje: number };
+
+const valorNivel = (departamento: TerritorioEducacion, nivel: NivelEducativo) => departamento[nivel];
+const porcentajeNivel = (departamento: TerritorioEducacion, nivel: NivelEducativo) => departamento[`pct_${nivel}`];
+const formatPct = (value: number | null | undefined) => value === null || value === undefined
+  ? '—'
+  : `${(value * 100).toFixed(1).replace('.', ',')} %`;
 
 export default function EducacionPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<EducacionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
-
-  // Estados de ordenamiento exclusivos de la tabla
-  const [sortField, setSortField] = useState<SortField>('poblacion_2022');
+  const [scope, setScope] = useState<'departamento' | 'municipio'>('departamento');
+  const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
+  const [selectedNivel, setSelectedNivel] = useState<NivelEducativo>('secundaria_completa');
+  const [sortField, setSortField] = useState<SortField>('porcentaje');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
     async function load() {
       try {
         setLoading(true);
-        const res = await fetch(apiPath('/api/educacion'));
-        const json = await res.json();
-        setData(json);
+        const educacionResponse = await fetch(apiPath('/api/educacion'));
+        if (!educacionResponse.ok) throw new Error('No se pudo cargar el nivel educativo');
+        setData(await educacionResponse.json());
       } catch (err) {
         console.error(err);
       } finally {
@@ -51,13 +85,67 @@ export default function EducacionPage() {
     load();
   }, []);
 
-  const kpis = data?.kpisProvincia;
-  const deptosOriginal = data?.departamentos || [];
+  const territoriosBase = useMemo(() => data?.territorios ?? EMPTY_TERRITORIOS, [data]);
+  const territoriosFiltrados = useMemo(
+    () => territoriosBase.filter((territorio) => selectedLocations === null || selectedLocations.includes(territoryKey(territorio))),
+    [territoriosBase, selectedLocations],
+  );
+  const deptosOriginal = useMemo(() => {
+    if (scope === 'municipio') {
+      return territoriosFiltrados.map((territorio) => ({
+        ...territorio,
+        nombre: territorio.municipio,
+        locationKey: territoryKey(territorio),
+      }));
+    }
 
-  // Datos fijos para el gráfico: ordenados por población descendente
+    const grouped = new Map<string, TerritorioVisible>();
+    for (const territorio of territoriosFiltrados) {
+      const current = grouped.get(territorio.departamento) || {
+        departamento: territorio.departamento,
+        municipio: '',
+        nombre: territorio.departamento,
+        locationKey: territorio.departamento,
+        poblacion_2022: 0,
+        secundaria_incompleta: 0,
+        secundaria_completa: 0,
+        superior_completo: 0,
+        pct_secundaria_incompleta: 0,
+        pct_secundaria_completa: 0,
+        pct_superior_completo: 0,
+        valor: 0,
+        porcentaje: 0,
+      };
+      current.poblacion_2022 += territorio.poblacion_2022;
+      current.secundaria_incompleta += territorio.secundaria_incompleta;
+      current.secundaria_completa += territorio.secundaria_completa;
+      current.superior_completo += territorio.superior_completo;
+      grouped.set(territorio.departamento, current);
+    }
+    return Array.from(grouped.values()).map((territorio) => ({
+      ...territorio,
+      locationKey: territorio.departamento,
+      pct_secundaria_incompleta: territorio.poblacion_2022 > 0 ? (territorio.secundaria_incompleta / territorio.poblacion_2022) * 100 : 0,
+      pct_secundaria_completa: territorio.poblacion_2022 > 0 ? (territorio.secundaria_completa / territorio.poblacion_2022) * 100 : 0,
+      pct_superior_completo: territorio.poblacion_2022 > 0 ? (territorio.superior_completo / territorio.poblacion_2022) * 100 : 0,
+    }));
+  }, [territoriosFiltrados, scope]);
+  const nivelSeleccionado = nivelesEducativos.find((nivel) => nivel.key === selectedNivel) || nivelesEducativos[1];
+  const totalSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + territorio.poblacion_2022, 0);
+  const totalNivelSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + valorNivel(territorio, selectedNivel), 0);
+  const porcentajeProvinciaSeleccion = totalSeleccionado > 0 ? totalNivelSeleccionado / totalSeleccionado : null;
+  const seleccionCompleta = selectedLocations === null || selectedLocations.length === territoriosBase.length;
+
   const datosGrafico = useMemo(() => {
-    return [...deptosOriginal].sort((a: any, b: any) => (Number(b.poblacion_2022) || 0) - (Number(a.poblacion_2022) || 0));
-  }, [deptosOriginal]);
+    return [...deptosOriginal]
+      .map((departamento) => ({
+        ...departamento,
+        valor: valorNivel(departamento, selectedNivel),
+        porcentaje: porcentajeNivel(departamento, selectedNivel),
+      }))
+      .sort((a, b) => b.porcentaje - a.porcentaje)
+      .slice(0, 25);
+  }, [deptosOriginal, selectedNivel]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -90,21 +178,22 @@ export default function EducacionPage() {
   // Datos ordenados exclusivamente para la tabla
   const deptosTablaOrdenados = useMemo(() => {
     if (!deptosOriginal.length) return [];
-    return [...deptosOriginal].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
-      if (sortField === 'departamento') {
-        aVal = (a.departamento || '').toLowerCase();
-        bVal = (b.departamento || '').toLowerCase();
+    return deptosOriginal.map((departamento) => ({
+      ...departamento,
+      valor: valorNivel(departamento, selectedNivel),
+      porcentaje: porcentajeNivel(departamento, selectedNivel),
+    })).sort((a, b) => {
+      if (sortField === 'departamento' || sortField === 'municipio') {
+        const aVal = (a[sortField] || '').toLowerCase();
+        const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      aVal = Number(a[sortField]) || 0;
-      bVal = Number(b[sortField]) || 0;
+      const aVal = sortField === 'valor' ? a.valor : sortField === 'porcentaje' ? a.porcentaje : a.poblacion_2022;
+      const bVal = sortField === 'valor' ? b.valor : sortField === 'porcentaje' ? b.porcentaje : b.poblacion_2022;
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [deptosOriginal, sortField, sortOrder]);
+  }, [deptosOriginal, sortField, sortOrder, selectedNivel]);
 
   return (
     <div className="container">
@@ -121,47 +210,76 @@ export default function EducacionPage() {
         </div>
       </div>
 
-      {/* Tarjetas KPI Superiores dinámicas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Total Mayores de 25 Años</span>
+          <span className="metricLabel">{seleccionCompleta ? 'Total Mayores de 25 Años' : 'Mayores de 25 seleccionados'}</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {kpis?.totalMayores25 || '...'}
+            {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Provincia de Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Censo 2022 · población de 25 años y más</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">% Secundaria Completa (Provincia)</span>
+          <span className="metricLabel">% {nivelSeleccionado.label} ({seleccionCompleta ? 'Provincia' : 'Selección'})</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {kpis?.pctSecundariaCompletaProv || '...'}
+            {seleccionCompleta ? formatPct(data?.comparativa.provincia?.[selectedNivel]) : formatPct(porcentajeProvinciaSeleccion)}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Corrientes' : 'Territorios seleccionados'}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">% Secundaria Completa (País)</span>
+          <span className="metricLabel">% {nivelSeleccionado.label} (País)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {kpis?.pctSecundariaCompletaPais || '...'}
+            {formatPct(data?.comparativa.pais?.[selectedNivel])}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b' }}>
-          <span className="metricLabel">% Secundaria Completa (NEA)</span>
+          <span className="metricLabel">% {nivelSeleccionado.label} (NEA)</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
-            {kpis?.pctSecundariaCompletaNea || '...'}
+            {formatPct(data?.comparativa.nea?.[selectedNivel])}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
         </div>
       </div>
 
-      {/* Gráfico / Tabla */}
-      <div className="card" style={{ marginTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, background: '#ffffff', padding: '10px 16px', borderRadius: 12, border: '1px solid #cbd5e1', marginTop: 12 }}>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>NIVEL A VISUALIZAR:</span>
+        {nivelesEducativos.map((nivel) => (
+          <button
+            key={nivel.key}
+            onClick={() => setSelectedNivel(nivel.key)}
+            aria-pressed={selectedNivel === nivel.key}
+            style={{ border: '1px solid', borderColor: selectedNivel === nivel.key ? '#10b981' : '#cbd5e1', backgroundColor: selectedNivel === nivel.key ? '#14203b' : '#f8fafc', color: selectedNivel === nivel.key ? '#ffffff' : '#334155', padding: '6px 14px', borderRadius: 8, fontSize: '0.82rem', fontWeight: selectedNivel === nivel.key ? 700 : 500, cursor: 'pointer' }}
+          >
+            {nivel.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Ver por</span>
+        <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 8, background: '#f1f5f9' }}>
+          {(['departamento', 'municipio'] as const).map((nivel) => (
+            <button
+              key={nivel}
+              onClick={() => setScope(nivel)}
+              aria-pressed={scope === nivel}
+              style={{ border: 0, borderRadius: 6, padding: '7px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', background: scope === nivel ? '#14203b' : 'transparent', color: scope === nivel ? '#fff' : '#475569' }}
+            >
+              {nivel}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="population-layout">
+      <div className="card" style={{ margin: 0 }}>
         <div className="cardHeader">
           <div className="cardTitle">
             <GraduationCap className="w-4 h-4 text-emerald-400" />
-            <span>Asistencia Educativa por Departamento</span>
+            <span>{nivelSeleccionado.label} en mayores de 25 por {scope}{scope === 'municipio' ? ' · hasta 25 principales' : ''}</span>
           </div>
 
           <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -218,16 +336,16 @@ export default function EducacionPage() {
                 <BarChart
                   layout="vertical"
                   data={datosGrafico}
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                  margin={{ top: 20, right: 55, left: 18, bottom: 35 }}
                 >
                   <XAxis
                     type="number"
                     domain={[0, 100]}
-                    tickFormatter={(v) => `${v}%`}
+                    tickFormatter={(value) => `${value}%`}
                     stroke="#94a3b8"
                     fontSize={11}
                     label={{
-                      value: 'Distribución porcentual de asistencia educativa (%)',
+                      value: 'Población de 25 años y más con el nivel seleccionado (%)',
                       position: 'insideBottom',
                       offset: -18,
                       fill: '#64748b',
@@ -237,13 +355,13 @@ export default function EducacionPage() {
                   />
                   <YAxis
                     type="category"
-                    dataKey="departamento"
-                    width={140}
+                    dataKey="nombre"
+                    width={185}
                     stroke="#475569"
-                    fontSize={11}
+                    fontSize={10}
                     tickLine={false}
                     label={{
-                      value: 'Departamento',
+                      value: scope === 'departamento' ? 'Departamento' : 'Municipio',
                       angle: -90,
                       position: 'insideLeft',
                       offset: -10,
@@ -254,10 +372,7 @@ export default function EducacionPage() {
                     }}
                   />
                   <Tooltip
-                    formatter={(val: any, name: any) => [
-                      `${Number(val).toLocaleString('es-AR')} personas`,
-                      name === 'asiste' ? 'Asiste Actualmente' : name === 'asistio' ? 'Asistió' : 'Nunca Asistió',
-                    ]}
+                    formatter={(value) => [`${Number(value).toFixed(1).replace('.', ',')} %`, nivelSeleccionado.label]}
                     contentStyle={{
                       backgroundColor: '#0f172a',
                       borderRadius: 8,
@@ -277,15 +392,16 @@ export default function EducacionPage() {
                       fontSize: '0.82rem',
                     }}
                   />
-                  <Legend
-                    verticalAlign="top"
-                    align="center"
-                    height={36}
-                    formatter={(val) => (val === 'asiste' ? 'Asiste Actualmente' : val === 'asistio' ? 'Asistió' : 'Nunca Asistió')}
-                  />
-                  <Bar dataKey="asiste" stackId="asistencia" fill="#047857" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="asistio" stackId="asistencia" fill="#1e3a8a" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="nunca_asistio" stackId="asistencia" fill="#94a3b8" radius={[0, 4, 4, 0]} />
+                  <Bar dataKey="porcentaje" fill="#047857" radius={[0, 4, 4, 0]}>
+                    <LabelList
+                      dataKey="porcentaje"
+                      position="right"
+                      formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
+                      fill="#14203b"
+                      fontSize={10}
+                      fontWeight={700}
+                    />
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -311,12 +427,12 @@ export default function EducacionPage() {
                 >
                   <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
                     <th 
-                      onClick={() => handleSort('departamento')}
+                      onClick={() => handleSort(scope)}
                       style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                     >
                       <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>Departamento</span>
-                        {renderSortIcon('departamento')}
+                        <span>{scope === 'departamento' ? 'Departamento' : 'Municipio'}</span>
+                        {renderSortIcon(scope)}
                       </div>
                     </th>
                     <th 
@@ -324,59 +440,43 @@ export default function EducacionPage() {
                       style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                     >
                       <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Población 2022</span>
+                        <span>Población 25+</span>
                         {renderSortIcon('poblacion_2022')}
                       </div>
                     </th>
                     <th 
-                      onClick={() => handleSort('asiste')}
+                      onClick={() => handleSort('valor')}
                       style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                     >
                       <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Asiste Actualmente</span>
-                        {renderSortIcon('asiste')}
+                        <span>{nivelSeleccionado.label}</span>
+                        {renderSortIcon('valor')}
                       </div>
                     </th>
                     <th 
-                      onClick={() => handleSort('asistio')}
+                      onClick={() => handleSort('porcentaje')}
                       style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                     >
                       <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Asistió</span>
-                        {renderSortIcon('asistio')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('nunca_asistio')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Nunca Asistió</span>
-                        {renderSortIcon('nunca_asistio')}
+                        <span>% del grupo 25+</span>
+                        {renderSortIcon('porcentaje')}
                       </div>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {deptosTablaOrdenados.map((row: any, idx: number) => (
+                  {deptosTablaOrdenados.map((row, idx: number) => (
                     <tr
-                      key={row.departamento || idx}
+                      key={row.locationKey || idx}
                       style={{
                         borderBottom: '1px solid #f1f5f9',
                         backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
                       }}
                     >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.departamento}</td>
+                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
                       <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.poblacion_2022.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>
-                        {row.asiste.toLocaleString('es-AR')} <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>({row.pct_asiste}%)</span>
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, color: '#1e3a8a' }}>
-                        {row.asistio.toLocaleString('es-AR')} <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: 500 }}>({row.pct_asistio}%)</span>
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#64748b' }}>
-                        {row.nunca_asistio.toLocaleString('es-AR')} <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>({row.pct_nunca_asistio}%)</span>
-                      </td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>{row.valor.toLocaleString('es-AR')}</td>
+                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{row.porcentaje.toFixed(1).replace('.', ',')} %</td>
                     </tr>
                   ))}
                 </tbody>
@@ -384,6 +484,12 @@ export default function EducacionPage() {
             </div>
           )}
         </div>
+      </div>
+      <TerritoryFilter
+        territories={territoriosBase}
+        selectedKeys={selectedLocations}
+        onSelectionChange={setSelectedLocations}
+      />
       </div>
     </div>
   );
