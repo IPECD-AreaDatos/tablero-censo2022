@@ -51,10 +51,8 @@ const nivelesEducativos: { key: NivelEducativo; label: string }[] = [
 ];
 const EMPTY_TERRITORIOS: TerritorioEducacion[] = [];
 
-type TerritorioVisible = TerritorioEducacion & { nombre: string; locationKey: string; valor: number; porcentaje: number };
-
-const valorNivel = (departamento: TerritorioEducacion, nivel: NivelEducativo) => departamento[nivel];
-const porcentajeNivel = (departamento: TerritorioEducacion, nivel: NivelEducativo) => departamento[`pct_${nivel}`];
+const valorNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) => territorio[nivel];
+const porcentajeNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) => territorio[`pct_${nivel}`];
 const formatPct = (value: number | null | undefined) => value === null || value === undefined
   ? '—'
   : `${(value * 100).toFixed(1).replace('.', ',')} %`;
@@ -63,7 +61,6 @@ export default function EducacionPage() {
   const [data, setData] = useState<EducacionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
-  const [scope, setScope] = useState<'departamento' | 'municipio'>('departamento');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
   const [selectedNivel, setSelectedNivel] = useState<NivelEducativo>('secundaria_completa');
   const [sortField, setSortField] = useState<SortField>('porcentaje');
@@ -90,46 +87,15 @@ export default function EducacionPage() {
     () => territoriosBase.filter((territorio) => selectedLocations === null || selectedLocations.includes(territoryKey(territorio))),
     [territoriosBase, selectedLocations],
   );
-  const deptosOriginal = useMemo(() => {
-    if (scope === 'municipio') {
-      return territoriosFiltrados.map((territorio) => ({
-        ...territorio,
-        nombre: territorio.municipio,
-        locationKey: territoryKey(territorio),
-      }));
-    }
 
-    const grouped = new Map<string, TerritorioVisible>();
-    for (const territorio of territoriosFiltrados) {
-      const current = grouped.get(territorio.departamento) || {
-        departamento: territorio.departamento,
-        municipio: '',
-        nombre: territorio.departamento,
-        locationKey: territorio.departamento,
-        poblacion_2022: 0,
-        secundaria_incompleta: 0,
-        secundaria_completa: 0,
-        superior_completo: 0,
-        pct_secundaria_incompleta: 0,
-        pct_secundaria_completa: 0,
-        pct_superior_completo: 0,
-        valor: 0,
-        porcentaje: 0,
-      };
-      current.poblacion_2022 += territorio.poblacion_2022;
-      current.secundaria_incompleta += territorio.secundaria_incompleta;
-      current.secundaria_completa += territorio.secundaria_completa;
-      current.superior_completo += territorio.superior_completo;
-      grouped.set(territorio.departamento, current);
-    }
-    return Array.from(grouped.values()).map((territorio) => ({
+  const territoriosVisibles = useMemo(() => {
+    return territoriosFiltrados.map((territorio) => ({
       ...territorio,
-      locationKey: territorio.departamento,
-      pct_secundaria_incompleta: territorio.poblacion_2022 > 0 ? (territorio.secundaria_incompleta / territorio.poblacion_2022) * 100 : 0,
-      pct_secundaria_completa: territorio.poblacion_2022 > 0 ? (territorio.secundaria_completa / territorio.poblacion_2022) * 100 : 0,
-      pct_superior_completo: territorio.poblacion_2022 > 0 ? (territorio.superior_completo / territorio.poblacion_2022) * 100 : 0,
+      nombre: territorio.municipio || territorio.departamento,
+      locationKey: territoryKey(territorio),
     }));
-  }, [territoriosFiltrados, scope]);
+  }, [territoriosFiltrados]);
+
   const nivelSeleccionado = nivelesEducativos.find((nivel) => nivel.key === selectedNivel) || nivelesEducativos[1];
   const totalSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + territorio.poblacion_2022, 0);
   const totalNivelSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + valorNivel(territorio, selectedNivel), 0);
@@ -137,15 +103,15 @@ export default function EducacionPage() {
   const seleccionCompleta = selectedLocations === null || selectedLocations.length === territoriosBase.length;
 
   const datosGrafico = useMemo(() => {
-    return [...deptosOriginal]
-      .map((departamento) => ({
-        ...departamento,
-        valor: valorNivel(departamento, selectedNivel),
-        porcentaje: porcentajeNivel(departamento, selectedNivel),
+    return [...territoriosVisibles]
+      .map((territorio) => ({
+        ...territorio,
+        valor: valorNivel(territorio, selectedNivel),
+        porcentaje: porcentajeNivel(territorio, selectedNivel),
       }))
       .sort((a, b) => b.porcentaje - a.porcentaje)
       .slice(0, 25);
-  }, [deptosOriginal, selectedNivel]);
+  }, [territoriosVisibles, selectedNivel]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -176,12 +142,12 @@ export default function EducacionPage() {
   };
 
   // Datos ordenados exclusivamente para la tabla
-  const deptosTablaOrdenados = useMemo(() => {
-    if (!deptosOriginal.length) return [];
-    return deptosOriginal.map((departamento) => ({
-      ...departamento,
-      valor: valorNivel(departamento, selectedNivel),
-      porcentaje: porcentajeNivel(departamento, selectedNivel),
+  const tablaOrdenada = useMemo(() => {
+    if (!territoriosVisibles.length) return [];
+    return territoriosVisibles.map((territorio) => ({
+      ...territorio,
+      valor: valorNivel(territorio, selectedNivel),
+      porcentaje: porcentajeNivel(territorio, selectedNivel),
     })).sort((a, b) => {
       if (sortField === 'departamento' || sortField === 'municipio') {
         const aVal = (a[sortField] || '').toLowerCase();
@@ -193,7 +159,7 @@ export default function EducacionPage() {
       const bVal = sortField === 'valor' ? b.valor : sortField === 'porcentaje' ? b.porcentaje : b.poblacion_2022;
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [deptosOriginal, sortField, sortOrder, selectedNivel]);
+  }, [territoriosVisibles, sortField, sortOrder, selectedNivel]);
 
   return (
     <div className="container">
@@ -210,6 +176,7 @@ export default function EducacionPage() {
         </div>
       </div>
 
+      {/* Tarjetas KPI Superiores */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
           <span className="metricLabel">{seleccionCompleta ? 'Total Mayores de 25 Años' : 'Mayores de 25 seleccionados'}</span>
@@ -244,6 +211,7 @@ export default function EducacionPage() {
         </div>
       </div>
 
+      {/* Selector de Nivel Educativo */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, background: '#ffffff', padding: '10px 16px', borderRadius: 12, border: '1px solid #cbd5e1', marginTop: 12 }}>
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>NIVEL A VISUALIZAR:</span>
         {nivelesEducativos.map((nivel) => (
@@ -258,238 +226,233 @@ export default function EducacionPage() {
         ))}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Ver por</span>
-        <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 8, background: '#f1f5f9' }}>
-          {(['departamento', 'municipio'] as const).map((nivel) => (
-            <button
-              key={nivel}
-              onClick={() => setScope(nivel)}
-              aria-pressed={scope === nivel}
-              style={{ border: 0, borderRadius: 6, padding: '7px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', background: scope === nivel ? '#14203b' : 'transparent', color: scope === nivel ? '#fff' : '#475569' }}
-            >
-              {nivel}
-            </button>
-          ))}
-        </div>
-      </div>
-
+      {/* Gráfico / Tabla + Filtro Lateral */}
       <div className="population-layout">
-      <div className="card" style={{ margin: 0 }}>
-        <div className="cardHeader">
-          <div className="cardTitle">
-            <GraduationCap className="w-4 h-4 text-emerald-400" />
-            <span>{nivelSeleccionado.label} en mayores de 25 por {scope}{scope === 'municipio' ? ' · hasta 25 principales' : ''}</span>
+        <div className="card" style={{ margin: 0 }}>
+          <div className="cardHeader">
+            <div className="cardTitle">
+              <GraduationCap className="w-4 h-4 text-emerald-400" />
+              <span>{nivelSeleccionado.label} en mayores de 25 por municipio · hasta 25 principales</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
+              <button
+                onClick={() => setViewMode('grafico')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Gráfico
+              </button>
+              <button
+                onClick={() => setViewMode('tabla')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                Tabla
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
-            <button
-              onClick={() => setViewMode('grafico')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Gráfico
-            </button>
-            <button
-              onClick={() => setViewMode('tabla')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              Tabla
-            </button>
-          </div>
-        </div>
-
-        <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
-          {loading ? (
-            <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando indicadores educativos...</span>
-            </div>
-          ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 620 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={datosGrafico}
-                  margin={{ top: 20, right: 55, left: 18, bottom: 35 }}
-                >
-                  <XAxis
-                    type="number"
-                    domain={[0, 100]}
-                    tickFormatter={(value) => `${value}%`}
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    label={{
-                      value: 'Población de 25 años y más con el nivel seleccionado (%)',
-                      position: 'insideBottom',
-                      offset: -18,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="nombre"
-                    width={185}
-                    stroke="#475569"
-                    fontSize={10}
-                    tickLine={false}
-                    label={{
-                      value: scope === 'departamento' ? 'Departamento' : 'Municipio',
-                      angle: -90,
-                      position: 'insideLeft',
-                      offset: -10,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      style: { textAnchor: 'middle' },
-                    }}
-                  />
-                  <Tooltip
-                    formatter={(value) => [`${Number(value).toFixed(1).replace('.', ',')} %`, nivelSeleccionado.label]}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderRadius: 8,
-                      border: '1px solid #334155',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{
-                      color: '#ffffff',
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: '0.8rem',
-                    }}
-                    itemStyle={{
-                      color: '#34d399',
-                      fontWeight: 700,
-                      fontSize: '0.82rem',
-                    }}
-                  />
-                  <Bar dataKey="porcentaje" fill="#047857" radius={[0, 4, 4, 0]}>
-                    <LabelList
-                      dataKey="porcentaje"
-                      position="right"
-                      formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
-                      fill="#14203b"
-                      fontSize={10}
-                      fontWeight={700}
-                    />
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div
-              style={{
-                maxHeight: '480px',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    backgroundColor: '#ffffff',
-                    zIndex: 2,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}
-                >
-                  <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th 
-                      onClick={() => handleSort(scope)}
-                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>{scope === 'departamento' ? 'Departamento' : 'Municipio'}</span>
-                        {renderSortIcon(scope)}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('poblacion_2022')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Población 25+</span>
-                        {renderSortIcon('poblacion_2022')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('valor')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>{nivelSeleccionado.label}</span>
-                        {renderSortIcon('valor')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('porcentaje')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% del grupo 25+</span>
-                        {renderSortIcon('porcentaje')}
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deptosTablaOrdenados.map((row, idx: number) => (
-                    <tr
-                      key={row.locationKey || idx}
-                      style={{
-                        borderBottom: '1px solid #f1f5f9',
-                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+          <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
+            {loading ? (
+              <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span>Calculando indicadores educativos...</span>
+              </div>
+            ) : viewMode === 'grafico' ? (
+              <div style={{ width: '100%', height: 620 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={datosGrafico}
+                    margin={{ top: 20, right: 55, left: 18, bottom: 35 }}
+                  >
+                    <XAxis
+                      type="number"
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${value}%`}
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      label={{
+                        value: 'Población de 25 años y más con el nivel seleccionado (%)',
+                        position: 'insideBottom',
+                        offset: -18,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
                       }}
-                    >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.poblacion_2022.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>{row.valor.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{row.porcentaje.toFixed(1).replace('.', ',')} %</td>
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="nombre"
+                      width={185}
+                      stroke="#475569"
+                      fontSize={10}
+                      tickLine={false}
+                      label={{
+                        value: 'Municipio',
+                        angle: -90,
+                        position: 'insideLeft',
+                        offset: -10,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        style: { textAnchor: 'middle' },
+                      }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [`${Number(value).toFixed(1).replace('.', ',')} %`, nivelSeleccionado.label]}
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderRadius: 8,
+                        border: '1px solid #334155',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        padding: '8px 12px',
+                      }}
+                      labelStyle={{
+                        color: '#ffffff',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: '0.8rem',
+                      }}
+                      itemStyle={{
+                        color: '#34d399',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                      }}
+                    />
+                    <Bar dataKey="porcentaje" fill="#047857" radius={[0, 4, 4, 0]}>
+                      <LabelList
+                        dataKey="porcentaje"
+                        position="right"
+                        formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
+                        fill="#14203b"
+                        fontSize={10}
+                        fontWeight={700}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: '520px',
+                  overflowY: 'auto',
+                  overflowX: 'auto',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead
+                    style={{
+                      position: 'sticky',
+                      top: 0,
+                      backgroundColor: '#ffffff',
+                      zIndex: 2,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                  >
+                    <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      <th 
+                        onClick={() => handleSort('departamento')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Departamento</span>
+                          {renderSortIcon('departamento')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('municipio')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Municipio</span>
+                          {renderSortIcon('municipio')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('poblacion_2022')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Población 25+</span>
+                          {renderSortIcon('poblacion_2022')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('valor')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>{nivelSeleccionado.label}</span>
+                          {renderSortIcon('valor')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('porcentaje')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>% del grupo 25+</span>
+                          {renderSortIcon('porcentaje')}
+                        </div>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {tablaOrdenada.map((row, idx: number) => (
+                      <tr
+                        key={row.locationKey || idx}
+                        style={{
+                          borderBottom: '1px solid #f1f5f9',
+                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                        }}
+                      >
+                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.poblacion_2022.toLocaleString('es-AR')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>{row.valor.toLocaleString('es-AR')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{row.porcentaje.toFixed(1).replace('.', ',')} %</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-      <TerritoryFilter
-        territories={territoriosBase}
-        selectedKeys={selectedLocations}
-        onSelectionChange={setSelectedLocations}
-      />
+        <TerritoryFilter
+          territories={territoriosBase}
+          selectedKeys={selectedLocations}
+          onSelectionChange={setSelectedLocations}
+        />
       </div>
     </div>
   );

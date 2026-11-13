@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
+import { InfoTooltip } from '@/components/InfoTooltip';
 import { 
   GraduationCap, 
   ChevronLeft, 
@@ -21,10 +22,11 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  LabelList,
 } from 'recharts';
 
 type NivelClima = 'muy_bajo' | 'bajo' | 'medio' | 'alto' | 'muy_alto';
-type SortField = 'nombre' | 'total_hogares' | 'valor_clima' | 'pct_clima';
+type SortField = 'departamento' | 'municipio' | 'total_hogares' | 'valor_clima' | 'pct_clima';
 type SortOrder = 'asc' | 'desc';
 type ClimaTerritory = {
   departamento: string;
@@ -45,7 +47,12 @@ type ClimaTerritory = {
 type VisibleClimaTerritory = ClimaTerritory & { locationKey: string };
 type ClimaData = {
   totalHogares: number;
-  kpis: { pctProv: string; pctPais: string; pctNea: string };
+  kpis: {
+    pais?: Record<NivelClima, string>;
+    nea?: Record<NivelClima, string>;
+    pctPais: string;
+    pctNea: string;
+  };
   detalle: ClimaTerritory[];
 };
 
@@ -56,7 +63,6 @@ export default function ClimaEducativoPage() {
   const [loading, setLoading] = useState(true);
   const [selectedClima, setSelectedClima] = useState<NivelClima>('medio');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
-  const [scope, setScope] = useState<'departamento' | 'municipio'>('departamento');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Ordenamiento exclusivo de la tabla
@@ -93,58 +99,38 @@ export default function ClimaEducativoPage() {
     muy_alto: 'Clima Muy Alto',
   };
 
+  const descripcionesClima: Record<NivelClima, string> = {
+    muy_bajo:
+      'Promedio de años de estudio alcanzados para cada miembro del hogar de 18 años y más. Muy bajo: menor a siete años de máximo nivel de instrucción.',
+    bajo:
+      'Promedio de años de estudio alcanzados para cada miembro del hogar de 18 años y más. Bajo: entre siete y diez años de máximo nivel de instrucción.',
+    medio:
+      'Promedio de años de estudio alcanzados para cada miembro del hogar de 18 años y más. Medio: entre once y trece años de máximo nivel de instrucción.',
+    alto:
+      'Promedio de años de estudio alcanzados para cada miembro del hogar de 18 años y más. Alto: entre catorce y quince años de máximo nivel de instrucción.',
+    muy_alto:
+      'Promedio de años de estudio alcanzados para cada miembro del hogar de 18 años y más. Muy alto: dieciséis años o más de máximo nivel de instrucción.',
+  };
+
   const territoriosVisibles = useMemo<VisibleClimaTerritory[]>(() => {
-    if (scope === 'municipio') {
-      return detalleFiltrado.map((territory) => ({
-        ...territory,
-        locationKey: territoryKey(territory),
-      }));
-    }
-
-    const grouped = new Map<string, VisibleClimaTerritory>();
-    for (const territory of detalleFiltrado) {
-      const current = grouped.get(territory.departamento) || {
-        departamento: territory.departamento,
-        municipio: '',
-        nombre: territory.departamento,
-        locationKey: territory.departamento,
-        total_hogares: 0,
-        muy_bajo: 0,
-        bajo: 0,
-        medio: 0,
-        alto: 0,
-        muy_alto: 0,
-        pct_muy_bajo: '0',
-        pct_bajo: '0',
-        pct_medio: '0',
-        pct_alto: '0',
-        pct_muy_alto: '0',
-      };
-      current.total_hogares += territory.total_hogares;
-      current.muy_bajo += territory.muy_bajo;
-      current.bajo += territory.bajo;
-      current.medio += territory.medio;
-      current.alto += territory.alto;
-      current.muy_alto += territory.muy_alto;
-      grouped.set(territory.departamento, current);
-    }
-
-    return Array.from(grouped.values()).map((territory) => ({
+    return detalleFiltrado.map((territory) => ({
       ...territory,
-      pct_muy_bajo: territory.total_hogares > 0 ? ((territory.muy_bajo / territory.total_hogares) * 100).toFixed(1) : '0',
-      pct_bajo: territory.total_hogares > 0 ? ((territory.bajo / territory.total_hogares) * 100).toFixed(1) : '0',
-      pct_medio: territory.total_hogares > 0 ? ((territory.medio / territory.total_hogares) * 100).toFixed(1) : '0',
-      pct_alto: territory.total_hogares > 0 ? ((territory.alto / territory.total_hogares) * 100).toFixed(1) : '0',
-      pct_muy_alto: territory.total_hogares > 0 ? ((territory.muy_alto / territory.total_hogares) * 100).toFixed(1) : '0',
+      municipio: territory.municipio || territory.nombre || territory.departamento,
+      locationKey: territoryKey(territory),
     }));
-  }, [detalleFiltrado, scope]);
+  }, [detalleFiltrado]);
 
+  // Cálculos dinámicos conectados al clima seleccionado y al filtro territorial
   const totalSeleccionado = detalleFiltrado.reduce((total, territory) => total + territory.total_hogares, 0);
-  const hogaresClimaMedioSeleccionado = detalleFiltrado.reduce((total, territory) => total + territory.medio, 0);
+  const hogaresClimaSeleccionado = detalleFiltrado.reduce((total, territory) => total + (territory[selectedClima] || 0), 0);
   const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+  
   const pctClimaProvincia = totalSeleccionado > 0
-    ? `${((hogaresClimaMedioSeleccionado / totalSeleccionado) * 100).toFixed(1).replace('.', ',')} %`
+    ? `${((hogaresClimaSeleccionado / totalSeleccionado) * 100).toFixed(1).replace('.', ',')} %`
     : '0,0 %';
+
+  const pctClimaPais = data?.kpis?.pais?.[selectedClima] || data?.kpis?.pctPais || '...';
+  const pctClimaNea = data?.kpis?.nea?.[selectedClima] || data?.kpis?.pctNea || '...';
 
   const datosGrafico = useMemo(() => [...territoriosVisibles]
     .sort((a, b) => b[selectedClima] - a[selectedClima])
@@ -159,7 +145,6 @@ export default function ClimaEducativoPage() {
     }
   };
 
-  // Ícono de orden con tamaño estricto de 12px
   const renderSortIcon = (field: SortField) => {
     if (sortField !== field) {
       return (
@@ -179,13 +164,12 @@ export default function ClimaEducativoPage() {
     );
   };
 
-  // Datos ordenados exclusivamente para la tabla
   const detalleTablaOrdenado = useMemo(() => {
     if (!territoriosVisibles.length) return [];
     return [...territoriosVisibles].sort((a, b) => {
-      if (sortField === 'nombre') {
-        const aVal = a.nombre.toLowerCase();
-        const bVal = b.nombre.toLowerCase();
+      if (sortField === 'departamento' || sortField === 'municipio') {
+        const aVal = (a[sortField] || '').toLowerCase();
+        const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
@@ -210,36 +194,52 @@ export default function ClimaEducativoPage() {
         </div>
       </div>
 
-      {/* KPIs Calculados Dinámicamente desde Base de Datos */}
+      {/* KPIs Dinámicos según Nivel de Clima y Selección Territorial */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
-        <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">{seleccionCompleta ? 'Total Hogares Relevados' : 'Hogares seleccionados'}</span>
+        <div className="card" style={{ padding: '14px 18px', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            {seleccionCompleta ? 'Total Hogares Relevados' : 'Hogares seleccionados'}
+            <InfoTooltip text="Total de hogares particulares censados en la jurisdicción analizada." />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
             {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}</span>
-        </div>
-
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #10b981' }}>
-          <span className="metricLabel">% Clima Medio ({seleccionCompleta ? 'Provincia' : 'Selección'})</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {pctClimaProvincia || '...'}
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Corrientes' : 'Territorios seleccionados'}</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6' }}>
-          <span className="metricLabel">% Clima Medio (Total País)</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #10b981', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {labelsClima[selectedClima]} ({seleccionCompleta ? 'Provincia' : 'Selección'})
+            <InfoTooltip text={descripcionesClima[selectedClima]} />
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+            {data ? pctClimaProvincia : '...'}
+          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {data ? `${hogaresClimaSeleccionado.toLocaleString('es-AR')} hogares (${seleccionCompleta ? 'Corrientes' : 'Selección'})` : ''}
+          </span>
+        </div>
+
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {labelsClima[selectedClima]} (Total País)
+            <InfoTooltip text={descripcionesClima[selectedClima]} />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {data?.kpis?.pctPais || '...'}
+            {pctClimaPais}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b' }}>
-          <span className="metricLabel">% Clima Medio (Región NEA)</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {labelsClima[selectedClima]} (Región NEA)
+            <InfoTooltip text={descripcionesClima[selectedClima]} />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
-            {data?.kpis?.pctNea || '...'}
+            {pctClimaNea}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
         </div>
@@ -256,10 +256,13 @@ export default function ClimaEducativoPage() {
           border: '1px solid #cbd5e1',
           alignItems: 'center',
           marginTop: 12,
+          flexWrap: 'wrap',
         }}
       >
-        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
-          NIVEL DE CLIMA EDUCATIVO:
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8, display: 'inline-flex', alignItems: 'center' }}>
+          NIVEL DE CLIMA EDUCATIVO
+          <InfoTooltip text={descripcionesClima[selectedClima]} />
+          <span style={{ marginLeft: 4 }}>:</span>
         </span>
         {(['muy_bajo', 'bajo', 'medio', 'alto', 'muy_alto'] as NivelClima[]).map((nivel) => (
           <button
@@ -284,233 +287,235 @@ export default function ClimaEducativoPage() {
 
       {/* Gráfico / Tabla */}
       <div className="population-layout">
-      <div className="card" style={{ margin: 0 }}>
-        <div className="cardHeader">
-          <div className="cardTitle">
-            <GraduationCap className="w-4 h-4 text-emerald-400" />
-            <span>Distribución de {labelsClima[selectedClima]} por {scope}</span>
+        <div className="card" style={{ margin: 0 }}>
+          <div className="cardHeader">
+            <div className="cardTitle">
+              <GraduationCap className="w-4 h-4 text-emerald-400" />
+              <span>Distribución de {labelsClima[selectedClima]} por municipio</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
+              <button
+                onClick={() => setViewMode('grafico')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Gráfico
+              </button>
+              <button
+                onClick={() => setViewMode('tabla')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                Tabla
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
-            <button
-              onClick={() => setViewMode('grafico')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Gráfico
-            </button>
-            <button
-              onClick={() => setViewMode('tabla')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              Tabla
-            </button>
-          </div>
-        </div>
-
-        <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569' }}>Ver por</span>
-            <div style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 8, background: '#f1f5f9' }}>
-              {(['departamento', 'municipio'] as const).map((nivel) => (
-                <button
-                  key={nivel}
-                  onClick={() => setScope(nivel)}
-                  aria-pressed={scope === nivel}
-                  style={{ border: 0, borderRadius: 6, padding: '7px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', background: scope === nivel ? '#14203b' : 'transparent', color: scope === nivel ? '#fff' : '#475569' }}
-                >
-                  {nivel}
-                </button>
-              ))}
-            </div>
-          </div>
-          {loading ? (
-            <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando indicadores de clima educativo...</span>
-            </div>
-          ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 600 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={datosGrafico}
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
-                >
-                  <XAxis
-                    type="number"
-                    tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    label={{
-                      value: 'Cantidad de Hogares',
-                      position: 'insideBottom',
-                      offset: -18,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="nombre"
-                    width={175}
-                    stroke="#475569"
-                    fontSize={11}
-                    tickLine={false}
-                    label={{
-                      value: scope === 'departamento' ? 'Departamento' : 'Municipio',
-                      angle: -90,
-                      position: 'insideLeft',
-                      offset: -10,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      style: { textAnchor: 'middle' },
-                    }}
-                  />
-                  <Tooltip
-                    formatter={(value) => [
-                      `${Number(value).toLocaleString('es-AR')} hogares`,
-                      labelsClima[selectedClima],
-                    ]}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderRadius: 8,
-                      border: '1px solid #334155',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{
-                      color: '#ffffff',
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: '0.8rem',
-                    }}
-                    itemStyle={{
-                      color: '#34d399',
-                      fontWeight: 700,
-                      fontSize: '0.82rem',
-                    }}
-                  />
-                  <Bar dataKey={selectedClima} fill="#047857" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div
-              style={{
-                maxHeight: '480px',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    backgroundColor: '#ffffff',
-                    zIndex: 2,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}
-                >
-                  <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th 
-                      onClick={() => handleSort('nombre')}
-                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>Territorio / Área</span>
-                        {renderSortIcon('nombre')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('total_hogares')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Total Hogares</span>
-                        {renderSortIcon('total_hogares')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('valor_clima')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>{labelsClima[selectedClima]}</span>
-                        {renderSortIcon('valor_clima')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('pct_clima')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% Incidencia</span>
-                        {renderSortIcon('pct_clima')}
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalleTablaOrdenado.map((row, idx: number) => (
-                    <tr
-                      key={row.locationKey || idx}
-                      style={{
-                        borderBottom: '1px solid #f1f5f9',
-                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+          <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
+            {loading ? (
+              <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span>Calculando indicadores de clima educativo...</span>
+              </div>
+            ) : viewMode === 'grafico' ? (
+              <div style={{ width: '100%', height: 600 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={datosGrafico}
+                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+                  >
+                    <XAxis
+                      type="number"
+                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      label={{
+                        value: 'Cantidad de Hogares',
+                        position: 'insideBottom',
+                        offset: -18,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
                       }}
-                    >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_hogares.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>
-                        {row[selectedClima].toLocaleString('es-AR')}
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
-                        {row[`pct_${selectedClima}`]} %
-                      </td>
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="municipio"
+                      width={175}
+                      stroke="#475569"
+                      fontSize={11}
+                      tickLine={false}
+                      label={{
+                        value: 'Municipio',
+                        angle: -90,
+                        position: 'insideLeft',
+                        offset: -10,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        style: { textAnchor: 'middle' },
+                      }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        `${Number(value).toLocaleString('es-AR')} hogares`,
+                        labelsClima[selectedClima],
+                      ]}
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderRadius: 8,
+                        border: '1px solid #334155',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        padding: '8px 12px',
+                      }}
+                      labelStyle={{
+                        color: '#ffffff',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: '0.8rem',
+                      }}
+                      itemStyle={{
+                        color: '#34d399',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                      }}
+                    />
+                    <Bar dataKey={selectedClima} fill="#047857" radius={[0, 4, 4, 0]}>
+                      <LabelList
+                        dataKey={selectedClima}
+                        position="right"
+                        formatter={(val: any) => Number(val).toLocaleString('es-AR')}
+                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: '520px',
+                  overflowY: 'auto',
+                  overflowX: 'auto',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead
+                    style={{
+                      position: 'sticky',
+                      top: 0,
+                      backgroundColor: '#ffffff',
+                      zIndex: 2,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                  >
+                    <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      <th 
+                        onClick={() => handleSort('departamento')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Departamento</span>
+                          {renderSortIcon('departamento')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('municipio')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Municipio</span>
+                          {renderSortIcon('municipio')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('total_hogares')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Total Hogares</span>
+                          {renderSortIcon('total_hogares')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('valor_clima')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>{labelsClima[selectedClima]}</span>
+                          {renderSortIcon('valor_clima')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('pct_clima')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>% Incidencia</span>
+                          {renderSortIcon('pct_clima')}
+                        </div>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {detalleTablaOrdenado.map((row, idx: number) => (
+                      <tr
+                        key={row.locationKey || idx}
+                        style={{
+                          borderBottom: '1px solid #f1f5f9',
+                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                        }}
+                      >
+                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_hogares.toLocaleString('es-AR')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>
+                          {row[selectedClima].toLocaleString('es-AR')}
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
+                          {row[`pct_${selectedClima}`]} %
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-      <TerritoryFilter
-        territories={detalleOriginal}
-        selectedKeys={selectedLocations}
-        onSelectionChange={setSelectedLocations}
-      />
+        <TerritoryFilter
+          territories={detalleOriginal}
+          selectedKeys={selectedLocations}
+          onSelectionChange={setSelectedLocations}
+        />
       </div>
     </div>
   );

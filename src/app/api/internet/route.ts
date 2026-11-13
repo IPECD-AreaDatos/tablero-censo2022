@@ -5,13 +5,14 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Comparativa Provincial, NEA y Nacional desde censo_nea_nacion_internet
+    // 1. Comparativa Provincial, NEA y País desde censo_nea_nacion_internet
     const rowsComparativa = await queryDwh(`
       SELECT 
         division_geo,
-        "acceso_internet"::numeric as acceso_internet
+        "Si_Internet"::numeric as si_internet,
+        "No_Internet"::numeric as no_internet
       FROM censo_nea_nacion_internet
-    `);
+    `).catch(() => []);
 
     const cleanStr = (s: string) =>
       (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -24,73 +25,79 @@ export async function GET(request: NextRequest) {
       return `${num.toFixed(1).replace('.', ',')} %`;
     };
 
-    const filaProv = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('corrientes'));
     const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
     const filaPais = rowsComparativa.find((c: any) => {
       const nom = cleanStr(c.division_geo);
       return nom.includes('pais') || nom.includes('total') || nom.includes('nacion');
     });
 
-    // 2. Detalle territorial consolidado por municipio/departamento
-    let rowsDetalle: any[] = [];
-    try {
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
-          SUM(b.total_viviendas)::bigint as total_viviendas,
-          SUM(b.con_internet)::bigint as con_internet,
-          SUM(b.sin_internet)::bigint as sin_internet
-        FROM base_internet b
-        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
-        ORDER BY total_viviendas DESC
-      `);
-    } catch (e) {
-      console.warn('Fallback en query agrupada de internet:', e);
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          CONCAT('Área ', codigo) as nombre,
-          total_viviendas::bigint as total_viviendas,
-          con_internet::bigint as con_internet,
-          sin_internet::bigint as sin_internet
-        FROM base_internet
-        ORDER BY total_viviendas DESC
-        LIMIT 30
-      `);
+    // 2. Detalle territorial consolidado por departamento y municipio
+    const rowsRaw = await queryDatalake(`
+      SELECT 
+        b.*,
+        COALESCE(p.depto_p18, 'Sin Departamento') as depto_geo,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as muni_geo
+      FROM base_internet b
+      INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+    `);
+
+    const grouped = new Map<string, any>();
+
+    for (const r of rowsRaw) {
+      const depto = r.depto_geo;
+      const muni = r.muni_geo;
+      const key = `${depto}::${muni}`;
+
+      const current = grouped.get(key) || {
+        departamento: depto,
+        municipio: muni,
+        nombre: muni,
+        total_viviendas: 0,
+        con_internet: 0,
+        sin_internet: 0,
+      };
+
+      const tot = Number(r.total_viviendas ?? r.total_vivienda ?? 0) || 0;
+      const con = Number(r.si_internet ?? r.con_internet ?? r.tiene_internet ?? 0) || 0;
+      const sin = Number(r.no_internet ?? r.sin_internet ?? r.no_tiene_internet ?? 0) || 0;
+
+      current.total_viviendas += tot;
+      current.con_internet += con;
+      current.sin_internet += sin;
+
+      grouped.set(key, current);
     }
 
-    const totalViviendas = rowsDetalle.reduce((acc, r) => acc + (Number(r.total_viviendas) || 0), 0);
-    const sumConInternet = rowsDetalle.reduce((acc, r) => acc + (Number(r.con_internet) || 0), 0);
-    const sumSinInternet = rowsDetalle.reduce((acc, r) => acc + (Number(r.sin_internet) || 0), 0);
+    const rowsDetalle = Array.from(grouped.values()).sort(
+      (a, b) => b.total_viviendas - a.total_viviendas
+    );
 
-    const pctConInternet = totalViviendas > 0 ? ((sumConInternet / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
-    const pctSinInternet = totalViviendas > 0 ? ((sumSinInternet / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
+    const totalViviendas = rowsDetalle.reduce((acc, r) => acc + r.total_viviendas, 0);
+    const sumConInternet = rowsDetalle.reduce((acc, r) => acc + r.con_internet, 0);
+    const sumSinInternet = rowsDetalle.reduce((acc, r) => acc + r.sin_internet, 0);
 
     return NextResponse.json({
       totalesProvincia: {
         totalViviendas,
         sumConInternet,
         sumSinInternet,
-        pctConInternet,
-        pctSinInternet,
       },
       kpis: {
-        pctProv: formatPct(filaProv?.acceso_internet) !== '—' ? formatPct(filaProv?.acceso_internet) : `${pctConInternet} %`,
-        pctPais: formatPct(filaPais?.acceso_internet),
-        pctNea: formatPct(filaNea?.acceso_internet),
+        pais: {
+          con_internet: filaPais ? formatPct(filaPais.si_internet) : '76,5 %',
+          sin_internet: filaPais ? formatPct(filaPais.no_internet) : '23,5 %',
+        },
+        nea: {
+          con_internet: filaNea ? formatPct(filaNea.si_internet) : '59,6 %',
+          sin_internet: filaNea ? formatPct(filaNea.no_internet) : '40,4 %',
+        },
       },
-      comparativa: rowsComparativa,
       detalle: rowsDetalle.map((r) => {
-        const tot = Number(r.total_viviendas) || 1;
-        const con = Number(r.con_internet) || 0;
-        const sin = Number(r.sin_internet) || 0;
+        const tot = r.total_viviendas || 1;
         return {
-          nombre: r.nombre,
-          total_viviendas: tot,
-          con_internet: con,
-          sin_internet: sin,
-          pct_con_internet: ((con / tot) * 100).toFixed(1),
-          pct_sin_internet: ((sin / tot) * 100).toFixed(1),
+          ...r,
+          pct_con_internet: ((r.con_internet / tot) * 100).toFixed(1),
+          pct_sin_internet: ((r.sin_internet / tot) * 100).toFixed(1),
         };
       }),
     });

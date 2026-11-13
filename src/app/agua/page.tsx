@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
+import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import { 
   Droplets, 
   ChevronLeft, 
@@ -20,17 +21,38 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  LabelList,
 } from 'recharts';
 
 type TipoAgua = 'red_publica' | 'bomba_motor' | 'pozo_sin_bomba' | 'cisterna_acequia';
-type SortField = 'nombre' | 'total_viviendas' | 'valor_agua' | 'pct_agua';
+type SortField = 'departamento' | 'municipio' | 'total_viviendas' | 'valor_agua' | 'pct_agua';
 type SortOrder = 'asc' | 'desc';
+
+type AguaTerritory = {
+  departamento: string;
+  municipio: string;
+  nombre: string;
+  total_viviendas: number;
+  red_publica: number;
+  bomba_motor: number;
+  pozo_sin_bomba: number;
+  cisterna_acequia: number;
+  pct_red_publica: string;
+  pct_bomba_motor: string;
+  pct_pozo_sin_bomba: string;
+  pct_cisterna_acequia: string;
+};
+
+type VisibleAguaTerritory = AguaTerritory & { locationKey: string };
+
+const EMPTY_TERRITORIES: AguaTerritory[] = [];
 
 export default function AguaPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTipo, setSelectedTipo] = useState<TipoAgua>('red_publica');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
   const [sortField, setSortField] = useState<SortField>('valor_agua');
@@ -52,8 +74,14 @@ export default function AguaPage() {
     load();
   }, []);
 
-  const detalleOriginal = data?.detalle || [];
-  const totales = data?.totalesProvincia;
+  const detalleOriginal = useMemo<AguaTerritory[]>(() => data?.detalle ?? EMPTY_TERRITORIES, [data]);
+  const detalleFiltrado = useMemo(
+    () =>
+      detalleOriginal.filter(
+        (territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
+      ),
+    [detalleOriginal, selectedLocations],
+  );
 
   const labelsAgua: Record<TipoAgua, string> = {
     red_publica: 'Red Pública (Agua Corriente)',
@@ -62,13 +90,44 @@ export default function AguaPage() {
     cisterna_acequia: 'Cisterna, Canal o Acequia',
   };
 
-  // Datos fijos para el gráfico: siempre ordenados de mayor a menor por el tipo de agua seleccionado
+  const territoriosVisibles = useMemo<VisibleAguaTerritory[]>(() => {
+    return detalleFiltrado.map((territory) => ({
+      ...territory,
+      municipio: territory.municipio || territory.nombre || territory.departamento,
+      locationKey: territoryKey(territory),
+    }));
+  }, [detalleFiltrado]);
+
+  // Cálculos dinámicos de las 4 tarjetas KPI superiores según selección territorial
+  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+
+  const kpisDinamicos = useMemo(() => {
+    const totalViviendas = detalleFiltrado.reduce((acc, t) => acc + t.total_viviendas, 0);
+    const sumRed = detalleFiltrado.reduce((acc, t) => acc + t.red_publica, 0);
+    const sumMotor = detalleFiltrado.reduce((acc, t) => acc + t.bomba_motor, 0);
+    const sumPozo = detalleFiltrado.reduce((acc, t) => acc + t.pozo_sin_bomba, 0);
+
+    const fmtPct = (v: number) =>
+      totalViviendas > 0 ? `${((v / totalViviendas) * 100).toFixed(1).replace('.', ',')} %` : '0,0 %';
+
+    return {
+      totalViviendas,
+      sumRedPublica: sumRed,
+      sumBombaMotor: sumMotor,
+      sumPozo,
+      pctRedPublica: fmtPct(sumRed),
+      pctBombaMotor: fmtPct(sumMotor),
+      pctPozo: fmtPct(sumPozo),
+    };
+  }, [detalleFiltrado]);
+
+  // Datos fijos para el gráfico: ordenados de mayor a menor por el tipo de agua seleccionado
   const datosGrafico = useMemo(() => {
-    if (!detalleOriginal.length) return [];
-    return [...detalleOriginal]
-      .sort((a: any, b: any) => (Number(b[selectedTipo]) || 0) - (Number(a[selectedTipo]) || 0))
+    if (!territoriosVisibles.length) return [];
+    return [...territoriosVisibles]
+      .sort((a, b) => (Number(b[selectedTipo]) || 0) - (Number(a[selectedTipo]) || 0))
       .slice(0, 25);
-  }, [detalleOriginal, selectedTipo]);
+  }, [territoriosVisibles, selectedTipo]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -100,16 +159,16 @@ export default function AguaPage() {
 
   // Datos ordenados exclusivamente para la tabla
   const detalleTablaOrdenado = useMemo(() => {
-    if (!detalleOriginal.length) return [];
-    return [...detalleOriginal].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
-      if (sortField === 'nombre') {
-        aVal = (a.nombre || '').toLowerCase();
-        bVal = (b.nombre || '').toLowerCase();
+    if (!territoriosVisibles.length) return [];
+    return [...territoriosVisibles].sort((a, b) => {
+      if (sortField === 'departamento' || sortField === 'municipio') {
+        const aVal = (a[sortField] || '').toLowerCase();
+        const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
+
+      let aVal = 0;
+      let bVal = 0;
 
       if (sortField === 'total_viviendas') {
         aVal = Number(a.total_viviendas) || 0;
@@ -124,7 +183,20 @@ export default function AguaPage() {
 
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [detalleOriginal, sortField, sortOrder, selectedTipo]);
+  }, [territoriosVisibles, sortField, sortOrder, selectedTipo]);
+
+  const getColorAgua = (tipo: TipoAgua) => {
+    switch (tipo) {
+      case 'red_publica':
+        return '#047857';
+      case 'bomba_motor':
+        return '#2563eb';
+      case 'pozo_sin_bomba':
+        return '#d97706';
+      case 'cisterna_acequia':
+        return '#0284c7';
+    }
+  };
 
   return (
     <div className="container">
@@ -141,43 +213,47 @@ export default function AguaPage() {
         </div>
       </div>
 
-      {/* Tarjetas KPI */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      {/* Tarjetas KPI conectadas dinámicamente al filtro territorial */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Total Viviendas Evaluadas</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
-            {totales ? totales.totalViviendas.toLocaleString('es-AR') : '...'}
+          <span className="metricLabel">
+            {seleccionCompleta ? 'Total Viviendas Evaluadas' : 'Viviendas Seleccionadas'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincial Calculado</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+            {data ? kpisDinamicos.totalViviendas.toLocaleString('es-AR') : '...'}
+          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}
+          </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
           <span className="metricLabel">Por Red Pública</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {totales ? `${totales.pctRedPublica} %` : '...'}
+            {data ? kpisDinamicos.pctRedPublica : '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {totales ? `${totales.sumRedPublica.toLocaleString('es-AR')} viviendas` : ''}
+            {data ? `${kpisDinamicos.sumRedPublica.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
           <span className="metricLabel">Perforación con Bomba Motor</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {totales ? `${totales.pctBombaMotor} %` : '...'}
+            {data ? kpisDinamicos.pctBombaMotor : '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {totales ? `${totales.sumBombaMotor.toLocaleString('es-AR')} viviendas` : ''}
+            {data ? `${kpisDinamicos.sumBombaMotor.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #d97706' }}>
           <span className="metricLabel">Pozo o Bomba Manual</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
-            {totales ? `${totales.pctPozo} %` : '...'}
+            {data ? kpisDinamicos.pctPozo : '...'}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {totales ? `${totales.sumPozo.toLocaleString('es-AR')} viviendas` : ''}
+            {data ? `${kpisDinamicos.sumPozo.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
       </div>
@@ -193,6 +269,7 @@ export default function AguaPage() {
           border: '1px solid #cbd5e1',
           alignItems: 'center',
           marginTop: 12,
+          flexWrap: 'wrap',
         }}
       >
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
@@ -219,217 +296,242 @@ export default function AguaPage() {
         ))}
       </div>
 
-      {/* Gráfico / Tabla */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div className="cardHeader">
-          <div className="cardTitle">
-            <Droplets className="w-4 h-4 text-emerald-400" />
-            <span>Distribución de {labelsAgua[selectedTipo]}</span>
+      {/* Gráfico / Tabla + Filtro Lateral */}
+      <div className="population-layout">
+        <div className="card" style={{ margin: 0 }}>
+          <div className="cardHeader">
+            <div className="cardTitle">
+              <Droplets className="w-4 h-4 text-emerald-400" />
+              <span>Distribución de {labelsAgua[selectedTipo]} por municipio</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
+              <button
+                onClick={() => setViewMode('grafico')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Gráfico
+              </button>
+              <button
+                onClick={() => setViewMode('tabla')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                Tabla
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
-            <button
-              onClick={() => setViewMode('grafico')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Gráfico
-            </button>
-            <button
-              onClick={() => setViewMode('tabla')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              Tabla
-            </button>
-          </div>
-        </div>
-
-        <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
-          {loading ? (
-            <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando procedencia de agua...</span>
-            </div>
-          ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 600 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={datosGrafico}
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
-                >
-                  <XAxis
-                    type="number"
-                    tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    label={{
-                      value: 'Cantidad de Viviendas Particulares',
-                      position: 'insideBottom',
-                      offset: -18,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="nombre"
-                    width={150}
-                    stroke="#475569"
-                    fontSize={11}
-                    tickLine={false}
-                    label={{
-                      value: 'Territorio / Área',
-                      angle: -90,
-                      position: 'insideLeft',
-                      offset: -10,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      style: { textAnchor: 'middle' },
-                    }}
-                  />
-                  <Tooltip
-                    formatter={(val: any) => [
-                      `${Number(val).toLocaleString('es-AR')} viviendas`,
-                      labelsAgua[selectedTipo],
-                    ]}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderRadius: 8,
-                      border: '1px solid #334155',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{
-                      color: '#ffffff',
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: '0.8rem',
-                    }}
-                    itemStyle={{
-                      color: '#34d399',
-                      fontWeight: 700,
-                      fontSize: '0.82rem',
-                    }}
-                  />
-                  <Bar
-                    dataKey={selectedTipo}
-                    fill={selectedTipo === 'red_publica' ? '#047857' : selectedTipo === 'bomba_motor' ? '#2563eb' : '#d97706'}
-                    radius={[0, 4, 4, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div
-              style={{
-                maxHeight: '480px',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    backgroundColor: '#ffffff',
-                    zIndex: 2,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}
-                >
-                  <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th 
-                      onClick={() => handleSort('nombre')}
-                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>Territorio / Área</span>
-                        {renderSortIcon('nombre')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('total_viviendas')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Total Viviendas</span>
-                        {renderSortIcon('total_viviendas')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('valor_agua')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>{labelsAgua[selectedTipo].split(' (')[0]}</span>
-                        {renderSortIcon('valor_agua')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('pct_agua')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>% Incidencia</span>
-                        {renderSortIcon('pct_agua')}
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalleTablaOrdenado.map((row: any, idx: number) => (
-                    <tr
-                      key={row.codigo || idx}
-                      style={{
-                        borderBottom: '1px solid #f1f5f9',
-                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+          <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
+            {loading ? (
+              <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span>Calculando procedencia de agua...</span>
+              </div>
+            ) : viewMode === 'grafico' ? (
+              <div style={{ width: '100%', height: 600 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={datosGrafico}
+                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+                  >
+                    <XAxis
+                      type="number"
+                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      label={{
+                        value: 'Cantidad de Viviendas Particulares',
+                        position: 'insideBottom',
+                        offset: -18,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
                       }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="municipio"
+                      width={175}
+                      stroke="#475569"
+                      fontSize={11}
+                      tickLine={false}
+                      label={{
+                        value: 'Municipio',
+                        angle: -90,
+                        position: 'insideLeft',
+                        offset: -10,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        style: { textAnchor: 'middle' },
+                      }}
+                    />
+                    <Tooltip
+                      formatter={(val: any) => [
+                        `${Number(val).toLocaleString('es-AR')} viviendas`,
+                        labelsAgua[selectedTipo],
+                      ]}
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderRadius: 8,
+                        border: '1px solid #334155',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        padding: '8px 12px',
+                      }}
+                      labelStyle={{
+                        color: '#ffffff',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: '0.8rem',
+                      }}
+                      itemStyle={{
+                        color: '#34d399',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                      }}
+                    />
+                    <Bar
+                      dataKey={selectedTipo}
+                      fill={getColorAgua(selectedTipo)}
+                      radius={[0, 4, 4, 0]}
                     >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.nombre}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>
-                        {row[selectedTipo].toLocaleString('es-AR')}
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
-                        {row[`pct_${selectedTipo}`] || '0'} %
-                      </td>
+                      <LabelList
+                        dataKey={selectedTipo}
+                        position="right"
+                        formatter={(val: any) => Number(val).toLocaleString('es-AR')}
+                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: '520px',
+                  overflowY: 'auto',
+                  overflowX: 'auto',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead
+                    style={{
+                      position: 'sticky',
+                      top: 0,
+                      backgroundColor: '#ffffff',
+                      zIndex: 2,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                  >
+                    <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      <th 
+                        onClick={() => handleSort('departamento')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Departamento</span>
+                          {renderSortIcon('departamento')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('municipio')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Municipio</span>
+                          {renderSortIcon('municipio')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('total_viviendas')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Total Viviendas</span>
+                          {renderSortIcon('total_viviendas')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('valor_agua')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>{labelsAgua[selectedTipo].split(' (')[0]}</span>
+                          {renderSortIcon('valor_agua')}
+                        </div>
+                      </th>
+                      <th 
+                        onClick={() => handleSort('pct_agua')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>% Incidencia</span>
+                          {renderSortIcon('pct_agua')}
+                        </div>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {detalleTablaOrdenado.map((row, idx: number) => (
+                      <tr
+                        key={row.locationKey || idx}
+                        style={{
+                          borderBottom: '1px solid #f1f5f9',
+                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                        }}
+                      >
+                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: getColorAgua(selectedTipo) }}>
+                          {row[selectedTipo].toLocaleString('es-AR')}
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
+                          {row[`pct_${selectedTipo}`] || '0'} %
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
+
+        <TerritoryFilter
+          territories={detalleOriginal}
+          selectedKeys={selectedLocations}
+          onSelectionChange={setSelectedLocations}
+        />
       </div>
     </div>
   );

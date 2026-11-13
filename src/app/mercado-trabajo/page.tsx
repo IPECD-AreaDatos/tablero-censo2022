@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
+import { InfoTooltip } from '@/components/InfoTooltip';
+import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import { 
   Briefcase, 
   ChevronLeft, 
@@ -20,17 +22,38 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  LabelList,
 } from 'recharts';
 
 type IndicadorTrabajo = 'actividad' | 'empleo' | 'desocupacion';
-type SortField = 'departamento' | 'actividad' | 'empleo' | 'desocupacion' | 'empleado_obrero' | 'cuenta_propia';
+type SortField = 'departamento' | 'municipio' | 'actividad' | 'empleo' | 'desocupacion' | 'empleado_obrero' | 'cuenta_propia';
 type SortOrder = 'asc' | 'desc';
+
+type TrabajoTerritory = {
+  departamento: string;
+  municipio: string;
+  nombre: string;
+  poblacion: number;
+  actividad: number;
+  empleo: number;
+  desocupacion: number;
+  servicio_domestico: number;
+  empleado_obrero: number;
+  cuenta_propia: number;
+  patron_empleador: number;
+  trabajador_familiar: number;
+};
+
+type VisibleTrabajoTerritory = TrabajoTerritory & { locationKey: string };
+
+const EMPTY_TERRITORIES: TrabajoTerritory[] = [];
 
 export default function MercadoTrabajoPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedIndicador, setSelectedIndicador] = useState<IndicadorTrabajo>('actividad');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
   const [sortField, setSortField] = useState<SortField>('actividad');
@@ -52,7 +75,15 @@ export default function MercadoTrabajoPage() {
     load();
   }, []);
 
-  const deptosOriginal = data?.departamentos || [];
+  const detalleOriginal = useMemo<TrabajoTerritory[]>(() => data?.detalle ?? EMPTY_TERRITORIES, [data]);
+  const detalleFiltrado = useMemo(
+    () =>
+      detalleOriginal.filter(
+        (territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
+      ),
+    [detalleOriginal, selectedLocations],
+  );
+
   const totales = data?.totalesProvincia;
 
   const labelsIndicador: Record<IndicadorTrabajo, string> = {
@@ -61,12 +92,65 @@ export default function MercadoTrabajoPage() {
     desocupacion: 'Tasa de Desocupación (%)',
   };
 
-  // Datos fijos para el gráfico: siempre ordenados de mayor a menor por el indicador seleccionado
+  // Lista única a nivel municipio (con su departamento) controlada por el panel lateral
+  const territoriosVisibles = useMemo<VisibleTrabajoTerritory[]>(() => {
+    return detalleFiltrado.map((t) => ({
+      ...t,
+      locationKey: territoryKey(t),
+    }));
+  }, [detalleFiltrado]);
+
+  // KPIs superiores dinámicos según filtro territorial
+  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+
+  const kpisMostrados = useMemo(() => {
+    if (seleccionCompleta || detalleFiltrado.length === 0) {
+      return {
+        actividad: totales?.actividad || '...',
+        empleo: totales?.empleo || '...',
+        desocupacion: totales?.desocupacion || '...',
+        subtitulo: 'Total Provincia de Corrientes',
+      };
+    }
+
+    const deptosUnicos = new Map<string, TrabajoTerritory>();
+    for (const t of detalleFiltrado) {
+      if (!deptosUnicos.has(t.departamento)) {
+        deptosUnicos.set(t.departamento, t);
+      }
+    }
+
+    const lista = Array.from(deptosUnicos.values());
+    const pobTotal = lista.reduce((acc, d) => acc + (d.poblacion || 0), 0);
+
+    if (pobTotal === 0) {
+      return {
+        actividad: '—',
+        empleo: '—',
+        desocupacion: '—',
+        subtitulo: 'Territorios seleccionados',
+      };
+    }
+
+    const pondAct = lista.reduce((acc, d) => acc + d.actividad * d.poblacion, 0) / pobTotal;
+    const pondEmp = lista.reduce((acc, d) => acc + d.empleo * d.poblacion, 0) / pobTotal;
+    const pondDes = lista.reduce((acc, d) => acc + d.desocupacion * d.poblacion, 0) / pobTotal;
+
+    return {
+      actividad: `${pondAct.toFixed(1).replace('.', ',')} %`,
+      empleo: `${pondEmp.toFixed(1).replace('.', ',')} %`,
+      desocupacion: `${pondDes.toFixed(1).replace('.', ',')} %`,
+      subtitulo: `Selección (${detalleFiltrado.length} ${detalleFiltrado.length === 1 ? 'municipio' : 'municipios'})`,
+    };
+  }, [seleccionCompleta, detalleFiltrado, totales]);
+
+  // Datos para el gráfico: ordenados de mayor a menor por el indicador seleccionado
   const datosGrafico = useMemo(() => {
-    if (!deptosOriginal.length) return [];
-    return [...deptosOriginal]
-      .sort((a: any, b: any) => (Number(b[selectedIndicador]) || 0) - (Number(a[selectedIndicador]) || 0));
-  }, [deptosOriginal, selectedIndicador]);
+    if (!territoriosVisibles.length) return [];
+    return [...territoriosVisibles]
+      .sort((a, b) => (Number(b[selectedIndicador]) || 0) - (Number(a[selectedIndicador]) || 0))
+      .slice(0, 25);
+  }, [territoriosVisibles, selectedIndicador]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -97,23 +181,20 @@ export default function MercadoTrabajoPage() {
   };
 
   // Datos ordenados exclusivamente para la tabla
-  const deptosTablaOrdenados = useMemo(() => {
-    if (!deptosOriginal.length) return [];
-    return [...deptosOriginal].sort((a: any, b: any) => {
-      let aVal: any;
-      let bVal: any;
-
-      if (sortField === 'departamento') {
-        aVal = (a.departamento || '').toLowerCase();
-        bVal = (b.departamento || '').toLowerCase();
+  const tablaOrdenada = useMemo(() => {
+    if (!territoriosVisibles.length) return [];
+    return [...territoriosVisibles].sort((a, b) => {
+      if (sortField === 'departamento' || sortField === 'municipio') {
+        const aVal = (a[sortField] || '').toLowerCase();
+        const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      aVal = Number(a[sortField]) || 0;
-      bVal = Number(b[sortField]) || 0;
+      const aVal = Number(a[sortField]) || 0;
+      const bVal = Number(b[sortField]) || 0;
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [deptosOriginal, sortField, sortOrder]);
+  }, [territoriosVisibles, sortField, sortOrder]);
 
   const getColorIndicador = (ind: IndicadorTrabajo) => {
     switch (ind) {
@@ -136,35 +217,44 @@ export default function MercadoTrabajoPage() {
         <div className="titleGroup">
           <h1>PRINCIPALES TASAS DE MERCADO DE TRABAJO</h1>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-            Provincia de Corrientes — Censo 2022 por Departamentos
+            Provincia de Corrientes — Censo 2022 por Municipios y Departamentos
           </p>
         </div>
       </div>
 
-      {/* Tarjetas KPI Superiores dinámicas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Tasa de Actividad Provincial</span>
+      {/* Tarjetas KPI Superiores dinámicas con Tooltips */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 }}>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            Tasa de Actividad ({seleccionCompleta ? 'Provincial' : 'Selección'})
+            <InfoTooltip text="Personas que poseen una ocupación, o al menos, lo están buscando activamente." />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {totales?.actividad || '...'}
+            {kpisMostrados.actividad}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Tasa de Empleo Provincial</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            Tasa de Empleo ({seleccionCompleta ? 'Provincial' : 'Selección'})
+            <InfoTooltip text="Es el conjunto de personas que tienen al menos una ocupación, es decir que en la semana de referencia han trabajado al menos una hora." />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
-            {totales?.empleo || '...'}
+            {kpisMostrados.empleo}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
-          <span className="metricLabel">Tasa de Desocupación Provincial</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
-            {totales?.desocupacion || '...'}
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            Tasa de Desocupación ({seleccionCompleta ? 'Provincial' : 'Selección'})
+            <InfoTooltip text="Personas que, no teniendo ocupación, están buscando activamente trabajo y están disponibles para trabajar." />
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincia de Corrientes</span>
+          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
+            {kpisMostrados.desocupacion}
+          </span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
       </div>
 
@@ -179,6 +269,7 @@ export default function MercadoTrabajoPage() {
           border: '1px solid #cbd5e1',
           alignItems: 'center',
           marginTop: 12,
+          flexWrap: 'wrap',
         }}
       >
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
@@ -205,240 +296,272 @@ export default function MercadoTrabajoPage() {
         ))}
       </div>
 
-      {/* Gráfico / Tabla */}
-      <div className="card" style={{ marginTop: 12 }}>
-        <div className="cardHeader">
-          <div className="cardTitle">
-            <Briefcase className="w-4 h-4 text-emerald-400" />
-            <span>{labelsIndicador[selectedIndicador]} por Departamento</span>
+      {/* Gráfico / Tabla + Filtro Lateral */}
+      <div className="population-layout">
+        <div className="card" style={{ margin: 0 }}>
+          <div className="cardHeader">
+            <div className="cardTitle">
+              <Briefcase className="w-4 h-4 text-emerald-400" />
+              <span>{labelsIndicador[selectedIndicador]} por Municipio</span>
+            </div>
+
+            <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
+              <button
+                onClick={() => setViewMode('grafico')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Gráfico
+              </button>
+              <button
+                onClick={() => setViewMode('tabla')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <TableIcon className="w-3.5 h-3.5" />
+                Tabla
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
-            <button
-              onClick={() => setViewMode('grafico')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Gráfico
-            </button>
-            <button
-              onClick={() => setViewMode('tabla')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                fontSize: '0.75rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
-                color: '#ffffff',
-              }}
-            >
-              <TableIcon className="w-3.5 h-3.5" />
-              Tabla
-            </button>
-          </div>
-        </div>
-
-        <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
-          {loading ? (
-            <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
-              <span>Calculando mercado de trabajo...</span>
-            </div>
-          ) : viewMode === 'grafico' ? (
-            <div style={{ width: '100%', height: 600 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={datosGrafico}
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
-                >
-                  <XAxis
-                    type="number"
-                    tickFormatter={(v) => `${v}%`}
-                    stroke="#94a3b8"
-                    fontSize={11}
-                    label={{
-                      value: labelsIndicador[selectedIndicador],
-                      position: 'insideBottom',
-                      offset: -18,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="departamento"
-                    width={140}
-                    stroke="#475569"
-                    fontSize={11}
-                    tickLine={false}
-                    label={{
-                      value: 'Departamento',
-                      angle: -90,
-                      position: 'insideLeft',
-                      offset: -10,
-                      fill: '#64748b',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      style: { textAnchor: 'middle' },
-                    }}
-                  />
-                  <Tooltip
-                    formatter={(val: any) => [`${Number(val).toFixed(1).replace('.', ',')} %`, labelsIndicador[selectedIndicador].replace(' (%)', '')]}
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderRadius: 8,
-                      border: '1px solid #334155',
-                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                      padding: '8px 12px',
-                    }}
-                    labelStyle={{
-                      color: '#ffffff',
-                      fontWeight: 600,
-                      marginBottom: 4,
-                      fontSize: '0.8rem',
-                    }}
-                    itemStyle={{
-                      color: '#34d399',
-                      fontWeight: 700,
-                      fontSize: '0.82rem',
-                    }}
-                  />
-                  <Bar
-                    dataKey={selectedIndicador}
-                    fill={getColorIndicador(selectedIndicador)}
-                    radius={[0, 4, 4, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div
-              style={{
-                maxHeight: '480px',
-                overflowY: 'auto',
-                overflowX: 'auto',
-                borderRadius: 8,
-                border: '1px solid #e2e8f0',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
-                <thead
-                  style={{
-                    position: 'sticky',
-                    top: 0,
-                    backgroundColor: '#ffffff',
-                    zIndex: 2,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-                  }}
-                >
-                  <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                    <th 
-                      onClick={() => handleSort('departamento')}
-                      style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <span>Departamento</span>
-                        {renderSortIcon('departamento')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('actividad')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Tasa Actividad</span>
-                        {renderSortIcon('actividad')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('empleo')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Tasa Empleo</span>
-                        {renderSortIcon('empleo')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('desocupacion')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Tasa Desocupación</span>
-                        {renderSortIcon('desocupacion')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('empleado_obrero')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Empleados / Obreros</span>
-                        {renderSortIcon('empleado_obrero')}
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('cuenta_propia')}
-                      style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                        <span>Cuenta Propia</span>
-                        {renderSortIcon('cuenta_propia')}
-                      </div>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deptosTablaOrdenados.map((row: any, idx: number) => (
-                    <tr
-                      key={row.departamento || idx}
-                      style={{
-                        borderBottom: '1px solid #f1f5f9',
-                        backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+          <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
+            {loading ? (
+              <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
+                <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+                <span>Calculando mercado de trabajo...</span>
+              </div>
+            ) : viewMode === 'grafico' ? (
+              <div style={{ width: '100%', height: 600 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={datosGrafico}
+                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+                  >
+                    <XAxis
+                      type="number"
+                      tickFormatter={(v) => `${v}%`}
+                      stroke="#94a3b8"
+                      fontSize={11}
+                      label={{
+                        value: labelsIndicador[selectedIndicador],
+                        position: 'insideBottom',
+                        offset: -18,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
                       }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="municipio"
+                      width={175}
+                      stroke="#475569"
+                      fontSize={11}
+                      tickLine={false}
+                      label={{
+                        value: 'Municipio',
+                        angle: -90,
+                        position: 'insideLeft',
+                        offset: -10,
+                        fill: '#64748b',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        style: { textAnchor: 'middle' },
+                      }}
+                    />
+                    <Tooltip
+                      formatter={(val: any) => [
+                        `${Number(val).toFixed(1).replace('.', ',')} %`,
+                        labelsIndicador[selectedIndicador].replace(' (%)', ''),
+                      ]}
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderRadius: 8,
+                        border: '1px solid #334155',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        padding: '8px 12px',
+                      }}
+                      labelStyle={{
+                        color: '#ffffff',
+                        fontWeight: 600,
+                        marginBottom: 4,
+                        fontSize: '0.8rem',
+                      }}
+                      itemStyle={{
+                        color: '#34d399',
+                        fontWeight: 700,
+                        fontSize: '0.82rem',
+                      }}
+                    />
+                    <Bar
+                      dataKey={selectedIndicador}
+                      fill={getColorIndicador(selectedIndicador)}
+                      radius={[0, 4, 4, 0]}
                     >
-                      <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.departamento}</td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'actividad' ? 700 : 500, color: selectedIndicador === 'actividad' ? '#047857' : 'inherit' }}>
-                        {row.actividad.toFixed(1).replace('.', ',')} %
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'empleo' ? 700 : 500, color: selectedIndicador === 'empleo' ? '#2563eb' : 'inherit' }}>
-                        {row.empleo.toFixed(1).replace('.', ',')} %
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'desocupacion' ? 700 : 500, color: selectedIndicador === 'desocupacion' ? '#dc2626' : 'inherit' }}>
-                        {row.desocupacion.toFixed(1).replace('.', ',')} %
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
-                        {row.empleado_obrero.toLocaleString('es-AR')}
-                      </td>
-                      <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
-                        {row.cuenta_propia.toLocaleString('es-AR')}
-                      </td>
+                      <LabelList
+                        dataKey={selectedIndicador}
+                        position="right"
+                        formatter={(val: any) => `${Number(val).toFixed(1).replace('.', ',')} %`}
+                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div
+                style={{
+                  maxHeight: '520px',
+                  overflowY: 'auto',
+                  overflowX: 'auto',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead
+                    style={{
+                      position: 'sticky',
+                      top: 0,
+                      backgroundColor: '#ffffff',
+                      zIndex: 2,
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                    }}
+                  >
+                    <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
+                      <th
+                        onClick={() => handleSort('departamento')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Departamento</span>
+                          {renderSortIcon('departamento')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('municipio')}
+                        style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                          <span>Municipio</span>
+                          {renderSortIcon('municipio')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('actividad')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Tasa Actividad</span>
+                          {renderSortIcon('actividad')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('empleo')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Tasa Empleo</span>
+                          {renderSortIcon('empleo')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('desocupacion')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Tasa Desocupación</span>
+                          {renderSortIcon('desocupacion')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('empleado_obrero')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Empleados / Obreros</span>
+                          {renderSortIcon('empleado_obrero')}
+                        </div>
+                      </th>
+                      <th
+                        onClick={() => handleSort('cuenta_propia')}
+                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                          <span>Cuenta Propia</span>
+                          {renderSortIcon('cuenta_propia')}
+                        </div>
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {tablaOrdenada.map((row, idx: number) => (
+                      <tr
+                        key={row.locationKey || idx}
+                        style={{
+                          borderBottom: '1px solid #f1f5f9',
+                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                        }}
+                      >
+                        <td style={{ padding: '8px 12px', fontWeight: 500, color: '#64748b' }}>
+                          {row.departamento}
+                        </td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>
+                          {row.municipio}
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'actividad' ? 700 : 500, color: selectedIndicador === 'actividad' ? '#047857' : 'inherit' }}>
+                          {row.actividad.toFixed(1).replace('.', ',')} %
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'empleo' ? 700 : 500, color: selectedIndicador === 'empleo' ? '#2563eb' : 'inherit' }}>
+                          {row.empleo.toFixed(1).replace('.', ',')} %
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: selectedIndicador === 'desocupacion' ? 700 : 500, color: selectedIndicador === 'desocupacion' ? '#dc2626' : 'inherit' }}>
+                          {row.desocupacion.toFixed(1).replace('.', ',')} %
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
+                          {row.empleado_obrero.toLocaleString('es-AR')}
+                        </td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', color: '#475569' }}>
+                          {row.cuenta_propia.toLocaleString('es-AR')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
+
+        <TerritoryFilter
+          territories={detalleOriginal}
+          selectedKeys={selectedLocations}
+          onSelectionChange={setSelectedLocations}
+        />
       </div>
     </div>
   );

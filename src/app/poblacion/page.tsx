@@ -54,7 +54,7 @@ export default function PoblacionPage() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
 
-  // Filtros de búsqueda y selección de municipios
+  // Filtros de búsqueda y selección de municipios (arranca con todos seleccionados)
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMunicipios, setSelectedMunicipios] = useState<string[]>([]);
 
@@ -69,6 +69,9 @@ export default function PoblacionPage() {
         const res = await fetch(apiPath('/api/poblacion'));
         const json = await res.json();
         setData(json);
+        if (json?.data) {
+          setSelectedMunicipios(json.data.map((m: MunicipioPoblacion) => m.municipio));
+        }
       } catch (err) {
         console.error(err);
       } finally {
@@ -133,11 +136,11 @@ export default function PoblacionPage() {
       : municipiosData.map((municipio) => municipio.municipio));
   };
 
-  // Conjunto de datos base activo (si hay filtro lateral aplicado se reduce a esos)
+  // Conjunto de datos base activo según selección del panel lateral
   const datosBaseActivos = useMemo<MunicipioPoblacion[]>(() => {
-    if (selectedMunicipios.length === 0) return municipiosData;
+    if (loading) return municipiosData;
     return municipiosData.filter((municipio) => selectedMunicipios.includes(municipio.municipio));
-  }, [municipiosData, selectedMunicipios]);
+  }, [municipiosData, selectedMunicipios, loading]);
 
   const totalesSeleccion = useMemo(() => {
     const poblacion = datosBaseActivos.reduce((total, municipio) => total + municipio.pop_2022, 0);
@@ -148,7 +151,7 @@ export default function PoblacionPage() {
       hogares,
       pesoRelativo: totalProvincia > 0 ? (poblacion / totalProvincia) * 100 : 0,
       personasPorHogar: hogares > 0 ? poblacion / hogares : 0,
-      provinciaCompleta: selectedMunicipios.length === 0 || selectedMunicipios.length === municipiosData.length,
+      provinciaCompleta: selectedMunicipios.length === municipiosData.length && municipiosData.length > 0,
     };
   }, [data?.totalPoblacion, datosBaseActivos, municipiosData.length, selectedMunicipios.length]);
 

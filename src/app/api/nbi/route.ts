@@ -30,62 +30,50 @@ export async function GET(request: NextRequest) {
       return `${num.toFixed(1).replace('.', ',')} %`;
     };
 
-    const filaProv = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('corrientes'));
     const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
     const filaPais = rowsComparativa.find((c: any) => {
       const nom = cleanStr(c.division_geo);
       return nom.includes('pais') || nom.includes('total') || nom.includes('nacion');
     });
 
-    // 2. Detalle territorial consolidado por municipio/departamento
-    let rowsDetalle: any[] = [];
-    try {
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
-          SUM(b.total_viviendas)::bigint as total_viviendas,
-          SUM(b.si_nbi_total)::bigint as si_nbi,
-          SUM(b.no_nbi_total)::bigint as no_nbi,
-          SUM(b.si_nbi_hacinamiento)::bigint as hacinamiento,
-          SUM(b.si_nbi_viv_incoveniente)::bigint as viv_inconveniente,
-          SUM(b.si_nbi_cond_sanitarias)::bigint as cond_sanitarias,
-          SUM(b.si_nbi_escolaridad)::bigint as escolaridad,
-          SUM(b.si_nbi_capacidad_subsistencia)::bigint as capacidad_subsistencia
-        FROM base_nbi b
-        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
-        ORDER BY total_viviendas DESC
-      `);
-    } catch (e) {
-      console.warn('Fallback en query agrupada de NBI:', e);
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          CONCAT('Área ', codigo) as nombre,
-          total_viviendas::bigint as total_viviendas,
-          si_nbi_total::bigint as si_nbi,
-          no_nbi_total::bigint as no_nbi,
-          si_nbi_hacinamiento::bigint as hacinamiento,
-          si_nbi_viv_incoveniente::bigint as viv_inconveniente,
-          si_nbi_cond_sanitarias::bigint as cond_sanitarias,
-          si_nbi_escolaridad::bigint as escolaridad,
-          si_nbi_capacidad_subsistencia::bigint as capacidad_subsistencia
-        FROM base_nbi
-        ORDER BY total_viviendas DESC
-        LIMIT 30
-      `);
-    }
+    const buildComponentes = (row: any) => ({
+      si_nbi: formatPct(row?.si_nbi_total),
+      hacinamiento: formatPct(row?.hacinamiento),
+      viv_inconveniente: formatPct(row?.viv_inconveniente),
+      cond_sanitarias: formatPct(row?.cond_sanitarias),
+      escolaridad: formatPct(row?.escolaridad),
+      capacidad_subsistencia: formatPct(row?.capacidad_subsistencia),
+    });
+
+    // 2. Detalle territorial consolidado por departamento y municipio
+    const rowsDetalle = await queryDatalake(`
+      SELECT 
+        COALESCE(p.depto_p18, 'Sin Departamento') as departamento,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as municipio,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+        SUM(b.total_viviendas)::bigint as total_viviendas,
+        SUM(b.si_nbi_total)::bigint as si_nbi,
+        SUM(b.no_nbi_total)::bigint as no_nbi,
+        SUM(b.si_nbi_hacinamiento)::bigint as hacinamiento,
+        SUM(b.si_nbi_viv_incoveniente)::bigint as viv_inconveniente,
+        SUM(b.si_nbi_cond_sanitarias)::bigint as cond_sanitarias,
+        SUM(b.si_nbi_escolaridad)::bigint as escolaridad,
+        SUM(b.si_nbi_capacidad_subsistencia)::bigint as capacidad_subsistencia
+      FROM base_nbi b
+      INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+      GROUP BY COALESCE(p.depto_p18, 'Sin Departamento'), COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+      ORDER BY total_viviendas DESC
+    `);
 
     const totalHogares = rowsDetalle.reduce((acc, r) => acc + (Number(r.total_viviendas) || 0), 0);
     const sumNbi = rowsDetalle.reduce((acc, r) => acc + (Number(r.si_nbi) || 0), 0);
-    const pctNbiProvCalculado = totalHogares > 0 ? ((sumNbi / totalHogares) * 100).toFixed(1).replace('.', ',') : '0';
 
     return NextResponse.json({
       totalHogares,
       sumNbi,
       kpis: {
-        pctProv: formatPct(filaProv?.si_nbi_total) !== '—' ? formatPct(filaProv?.si_nbi_total) : `${pctNbiProvCalculado} %`,
-        pctPais: formatPct(filaPais?.si_nbi_total),
-        pctNea: formatPct(filaNea?.si_nbi_total),
+        pais: buildComponentes(filaPais),
+        nea: buildComponentes(filaNea),
       },
       comparativa: rowsComparativa,
       detalle: rowsDetalle.map((r) => {
@@ -98,6 +86,8 @@ export async function GET(request: NextRequest) {
         const sub = Number(r.capacidad_subsistencia) || 0;
 
         return {
+          departamento: r.departamento,
+          municipio: r.municipio,
           nombre: r.nombre,
           total_viviendas: tot,
           si_nbi: nbi,
@@ -111,6 +101,8 @@ export async function GET(request: NextRequest) {
           pct_hacinamiento: ((hac / tot) * 100).toFixed(1),
           pct_viv_inconveniente: ((viv / tot) * 100).toFixed(1),
           pct_cond_sanitarias: ((san / tot) * 100).toFixed(1),
+          pct_escolaridad: ((esc / tot) * 100).toFixed(1),
+          pct_capacidad_subsistencia: ((sub / tot) * 100).toFixed(1),
         };
       }),
     });

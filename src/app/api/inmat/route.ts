@@ -17,62 +17,55 @@ export async function GET(request: NextRequest) {
       FROM censo_nea_nacion_inmat
     `);
 
-    // 2. Detalle territorial consolidado por municipio/departamento
-    let rowsDetalle: any[] = [];
-    try {
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
-          SUM(b.total_viviendas)::bigint as total_viviendas,
-          SUM(b.calidad_1)::bigint as calidad_1,
-          SUM(b.calidad_2)::bigint as calidad_2,
-          SUM(b.calidad_3)::bigint as calidad_3,
-          SUM(b.calidad_4)::bigint as calidad_4,
-          SUM(b.ignorado)::bigint as ignorado
-        FROM base_inmat b
-        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
-        GROUP BY COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
-        ORDER BY total_viviendas DESC
-      `);
-    } catch (e) {
-      console.warn('Fallback en query agrupada de INMAT:', e);
-      rowsDetalle = await queryDatalake(`
-        SELECT 
-          CONCAT('Área ', codigo) as nombre,
-          total_viviendas::bigint as total_viviendas,
-          calidad_1::bigint as calidad_1,
-          calidad_2::bigint as calidad_2,
-          calidad_3::bigint as calidad_3,
-          calidad_4::bigint as calidad_4,
-          ignorado::bigint as ignorado
-        FROM base_inmat
-        ORDER BY total_viviendas DESC
-        LIMIT 30
-      `);
-    }
+    const cleanStr = (s: string) =>
+      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const formatPct = (val: any) => {
+      if (val === undefined || val === null) return '—';
+      let num = Number(val);
+      if (isNaN(num)) return '—';
+      if (num > 0 && num <= 1) num *= 100;
+      return `${num.toFixed(1).replace('.', ',')} %`;
+    };
+
+    const filaNea = rowsComparativa.find((c: any) => cleanStr(c.division_geo).includes('nea'));
+    const filaPais = rowsComparativa.find((c: any) => {
+      const nom = cleanStr(c.division_geo);
+      return nom.includes('pais') || nom.includes('total') || nom.includes('nacion');
+    });
+
+    const buildCalidades = (row: any) => ({
+      calidad_1: formatPct(row?.calidad_1),
+      calidad_2: formatPct(row?.calidad_2),
+      calidad_3: formatPct(row?.calidad_3),
+      calidad_4: formatPct(row?.calidad_4),
+    });
+
+    // 2. Detalle territorial consolidado por departamento y municipio
+    const rowsDetalle = await queryDatalake(`
+      SELECT 
+        COALESCE(p.depto_p18, 'Sin Departamento') as departamento,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as municipio,
+        COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') as nombre,
+        SUM(b.total_viviendas)::bigint as total_viviendas,
+        SUM(b.calidad_1)::bigint as calidad_1,
+        SUM(b.calidad_2)::bigint as calidad_2,
+        SUM(b.calidad_3)::bigint as calidad_3,
+        SUM(b.calidad_4)::bigint as calidad_4,
+        SUM(b.ignorado)::bigint as ignorado
+      FROM base_inmat b
+      INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+      GROUP BY COALESCE(p.depto_p18, 'Sin Departamento'), COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+      ORDER BY total_viviendas DESC
+    `);
 
     const totalViviendas = rowsDetalle.reduce((acc, r) => acc + (Number(r.total_viviendas) || 0), 0);
-    const sumCalidad1 = rowsDetalle.reduce((acc, r) => acc + (Number(r.calidad_1) || 0), 0);
-    const sumCalidad2 = rowsDetalle.reduce((acc, r) => acc + (Number(r.calidad_2) || 0), 0);
-    const sumCalidad3 = rowsDetalle.reduce((acc, r) => acc + (Number(r.calidad_3) || 0), 0);
-    const sumCalidad4 = rowsDetalle.reduce((acc, r) => acc + (Number(r.calidad_4) || 0), 0);
-
-    const pctCalidad1 = totalViviendas > 0 ? ((sumCalidad1 / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
-    const pctCalidad2 = totalViviendas > 0 ? ((sumCalidad2 / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
-    const pctCalidad3 = totalViviendas > 0 ? ((sumCalidad3 / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
-    const pctCalidad4 = totalViviendas > 0 ? ((sumCalidad4 / totalViviendas) * 100).toFixed(1).replace('.', ',') : '0';
 
     return NextResponse.json({
-      totalesProvincia: {
-        totalViviendas,
-        sumCalidad1,
-        sumCalidad2,
-        sumCalidad3,
-        sumCalidad4,
-        pctCalidad1,
-        pctCalidad2,
-        pctCalidad3,
-        pctCalidad4,
+      totalViviendas,
+      kpis: {
+        pais: buildCalidades(filaPais),
+        nea: buildCalidades(filaNea),
       },
       comparativa: rowsComparativa,
       detalle: rowsDetalle.map((r) => {
@@ -82,6 +75,8 @@ export async function GET(request: NextRequest) {
         const c3 = Number(r.calidad_3) || 0;
         const c4 = Number(r.calidad_4) || 0;
         return {
+          departamento: r.departamento,
+          municipio: r.municipio,
           nombre: r.nombre,
           total_viviendas: tot,
           calidad_1: c1,
