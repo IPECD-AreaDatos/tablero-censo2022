@@ -5,11 +5,13 @@ import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { InfoTooltip } from '@/components/InfoTooltip';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
+import CorrientesMap from '@/components/CorrientesMap';
 import { 
   AlertTriangle, 
   ChevronLeft, 
   BarChart2, 
   Table as TableIcon, 
+  Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
@@ -74,7 +76,7 @@ export default function NBIPage() {
   const [data, setData] = useState<NbiData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedComp, setSelectedComp] = useState<ComponenteNBI>('si_nbi');
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
@@ -134,6 +136,56 @@ export default function NBIPage() {
       locationKey: territoryKey(territory),
     }));
   }, [detalleFiltrado]);
+
+  // Datos consolidados por departamento para el Mapa (% de incidencia del componente NBI activo)
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
+    const deptosMap = new Map<string, { total: number; compVal: number }>();
+
+    for (const t of detalleOriginal) {
+      const curr = deptosMap.get(t.departamento) || { total: 0, compVal: 0 };
+      curr.total += Number(t.total_viviendas) || 0;
+      curr.compVal += Number(t[selectedComp]) || 0;
+      deptosMap.set(t.departamento, curr);
+    }
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pct = vals.total > 0 ? (vals.compVal / vals.total) * 100 : 0;
+      return {
+        territoryName: depto,
+        value: pct,
+        labelFormatted: `${pct.toFixed(1).replace('.', ',')} %`,
+        subtitle: `${vals.compVal.toLocaleString('es-AR')} de ${vals.total.toLocaleString('es-AR')} hogares`,
+        isSelected: deptosActivos.has(depto),
+      };
+    });
+  }, [detalleOriginal, detalleFiltrado, selectedComp]);
+
+  // Clic en un departamento del mapa para filtrar o restaurar todos
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+    const target = norm(deptoName);
+
+    const keysDelDepto = detalleOriginal
+      .filter((t) => norm(t.departamento) === target)
+      .map(territoryKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedLocations((prev) => {
+      const current = prev ?? detalleOriginal.map(territoryKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
 
   // Cálculos dinámicos de las tarjetas KPI superiores según selección territorial y componente
   const totalSeleccionado = detalleFiltrado.reduce((acc, t) => acc + t.total_viviendas, 0);
@@ -317,13 +369,15 @@ export default function NBIPage() {
         ))}
       </div>
 
-      {/* Gráfico / Tabla + Filtro Lateral */}
+      {/* Gráfico / Tabla / Mapa + Filtro Lateral */}
       <div className="population-layout">
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
             <div className="cardTitle">
               <AlertTriangle className="w-4 h-4 text-emerald-400" />
-              <span>{labelsComp[selectedComp]} por municipio</span>
+              <span>
+                {labelsComp[selectedComp]} por {viewMode === 'mapa' ? 'departamento' : 'municipio'}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -364,6 +418,25 @@ export default function NBIPage() {
               >
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
+              </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
               </button>
             </div>
           </div>
@@ -449,6 +522,13 @@ export default function NBIPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={`% ${labelsComp[selectedComp]}`}
+                colorScheme="red"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div
                 style={{

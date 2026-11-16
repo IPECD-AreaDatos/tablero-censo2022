@@ -4,11 +4,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
+import CorrientesMap from '@/components/CorrientesMap';
 import { 
   Droplets, 
   ChevronLeft, 
   BarChart2, 
   Table as TableIcon, 
+  Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
@@ -51,7 +53,7 @@ export default function AguaPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedTipo, setSelectedTipo] = useState<TipoAgua>('red_publica');
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
@@ -97,6 +99,56 @@ export default function AguaPage() {
       locationKey: territoryKey(territory),
     }));
   }, [detalleFiltrado]);
+
+  // Datos consolidados por departamento para el Mapa (% de incidencia de la procedencia elegida)
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
+    const deptosMap = new Map<string, { total: number; tipoVal: number }>();
+
+    for (const t of detalleOriginal) {
+      const curr = deptosMap.get(t.departamento) || { total: 0, tipoVal: 0 };
+      curr.total += Number(t.total_viviendas) || 0;
+      curr.tipoVal += Number(t[selectedTipo]) || 0;
+      deptosMap.set(t.departamento, curr);
+    }
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pct = vals.total > 0 ? (vals.tipoVal / vals.total) * 100 : 0;
+      return {
+        territoryName: depto,
+        value: pct,
+        labelFormatted: `${pct.toFixed(1).replace('.', ',')} %`,
+        subtitle: `${vals.tipoVal.toLocaleString('es-AR')} de ${vals.total.toLocaleString('es-AR')} viviendas`,
+        isSelected: deptosActivos.has(depto),
+      };
+    });
+  }, [detalleOriginal, detalleFiltrado, selectedTipo]);
+
+  // Clic en un departamento del mapa para aislarlo o restaurar toda la selección
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+    const target = norm(deptoName);
+
+    const keysDelDepto = detalleOriginal
+      .filter((t) => norm(t.departamento) === target)
+      .map(territoryKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedLocations((prev) => {
+      const current = prev ?? detalleOriginal.map(territoryKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
 
   // Cálculos dinámicos de las 4 tarjetas KPI superiores según selección territorial
   const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
@@ -198,6 +250,19 @@ export default function AguaPage() {
     }
   };
 
+  const getMapColorScheme = (tipo: TipoAgua): 'emerald' | 'blue' | 'amber' => {
+    switch (tipo) {
+      case 'red_publica':
+        return 'emerald';
+      case 'bomba_motor':
+        return 'blue';
+      case 'pozo_sin_bomba':
+        return 'amber';
+      case 'cisterna_acequia':
+        return 'blue';
+    }
+  };
+
   return (
     <div className="container">
       {/* Header */}
@@ -296,13 +361,15 @@ export default function AguaPage() {
         ))}
       </div>
 
-      {/* Gráfico / Tabla + Filtro Lateral */}
+      {/* Gráfico / Tabla / Mapa + Filtro Lateral */}
       <div className="population-layout">
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
             <div className="cardTitle">
               <Droplets className="w-4 h-4 text-emerald-400" />
-              <span>Distribución de {labelsAgua[selectedTipo]} por municipio</span>
+              <span>
+                Distribución de {labelsAgua[selectedTipo]} por {viewMode === 'mapa' ? 'departamento' : 'municipio'}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -343,6 +410,25 @@ export default function AguaPage() {
               >
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
+              </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
               </button>
             </div>
           </div>
@@ -432,6 +518,13 @@ export default function AguaPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={`% ${labelsAgua[selectedTipo].split(' (')[0]}`}
+                colorScheme={getMapColorScheme(selectedTipo)}
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div
                 style={{

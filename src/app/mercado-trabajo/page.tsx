@@ -5,11 +5,13 @@ import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { InfoTooltip } from '@/components/InfoTooltip';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
+import CorrientesMap from '@/components/CorrientesMap';
 import { 
   Briefcase, 
   ChevronLeft, 
   BarChart2, 
   Table as TableIcon, 
+  Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
@@ -52,7 +54,7 @@ export default function MercadoTrabajoPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedIndicador, setSelectedIndicador] = useState<IndicadorTrabajo>('actividad');
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
@@ -92,13 +94,56 @@ export default function MercadoTrabajoPage() {
     desocupacion: 'Tasa de Desocupación (%)',
   };
 
-  // Lista única a nivel municipio (con su departamento) controlada por el panel lateral
   const territoriosVisibles = useMemo<VisibleTrabajoTerritory[]>(() => {
     return detalleFiltrado.map((t) => ({
       ...t,
       locationKey: territoryKey(t),
     }));
   }, [detalleFiltrado]);
+
+  // Datos consolidados por departamento para el Mapa
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
+    const deptosMap = new Map<string, TrabajoTerritory>();
+
+    for (const t of detalleOriginal) {
+      if (!deptosMap.has(t.departamento)) {
+        deptosMap.set(t.departamento, t);
+      }
+    }
+
+    return Array.from(deptosMap.values()).map((d) => {
+      const val = Number(d[selectedIndicador]) || 0;
+      return {
+        territoryName: d.departamento,
+        value: val,
+        labelFormatted: `${val.toFixed(1).replace('.', ',')} %`,
+        subtitle: `Población: ${d.poblacion.toLocaleString('es-AR')} hab.`,
+        isSelected: deptosActivos.has(d.departamento),
+      };
+    });
+  }, [detalleOriginal, detalleFiltrado, selectedIndicador]);
+
+  // Permite hacer clic en un departamento del mapa para aislarlo o restaurar todos en el filtro lateral
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const norm = (s: string) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const target = norm(deptoName);
+
+    const keysDelDepto = detalleOriginal
+      .filter((t) => norm(t.departamento) === target)
+      .map(territoryKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedLocations((prev) => {
+      const current = prev ?? detalleOriginal.map(territoryKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
 
   // KPIs superiores dinámicos según filtro territorial
   const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
@@ -180,7 +225,6 @@ export default function MercadoTrabajoPage() {
     );
   };
 
-  // Datos ordenados exclusivamente para la tabla
   const tablaOrdenada = useMemo(() => {
     if (!territoriosVisibles.length) return [];
     return [...territoriosVisibles].sort((a, b) => {
@@ -204,6 +248,17 @@ export default function MercadoTrabajoPage() {
         return '#2563eb';
       case 'desocupacion':
         return '#dc2626';
+    }
+  };
+
+  const getMapColorScheme = (ind: IndicadorTrabajo): 'emerald' | 'blue' | 'red' => {
+    switch (ind) {
+      case 'actividad':
+        return 'emerald';
+      case 'empleo':
+        return 'blue';
+      case 'desocupacion':
+        return 'red';
     }
   };
 
@@ -296,13 +351,15 @@ export default function MercadoTrabajoPage() {
         ))}
       </div>
 
-      {/* Gráfico / Tabla + Filtro Lateral */}
+      {/* Gráfico / Tabla / Mapa + Filtro Lateral */}
       <div className="population-layout">
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
             <div className="cardTitle">
               <Briefcase className="w-4 h-4 text-emerald-400" />
-              <span>{labelsIndicador[selectedIndicador]} por Municipio</span>
+              <span>
+                {labelsIndicador[selectedIndicador]} por {viewMode === 'mapa' ? 'Departamento' : 'Municipio'}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -343,6 +400,25 @@ export default function MercadoTrabajoPage() {
               >
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
+              </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
               </button>
             </div>
           </div>
@@ -432,6 +508,14 @@ export default function MercadoTrabajoPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={labelsIndicador[selectedIndicador].replace(' (%)', '')}
+                colorScheme={getMapColorScheme(selectedIndicador)}
+                geoJsonUrl="/corrientes-departamentos.geojson"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div
                 style={{
