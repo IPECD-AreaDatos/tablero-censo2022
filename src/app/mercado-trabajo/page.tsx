@@ -104,22 +104,31 @@ export default function MercadoTrabajoPage() {
   // Datos consolidados por departamento para el Mapa
   const datosMapa = useMemo(() => {
     const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
-    const deptosMap = new Map<string, TrabajoTerritory>();
+    const deptosMap = new Map<string, { pob: number; ocu: number; des: number }>();
 
-    for (const t of detalleOriginal) {
-      if (!deptosMap.has(t.departamento)) {
-        deptosMap.set(t.departamento, t);
-      }
+    for (const t of detalleOriginal as any[]) {
+      const curr = deptosMap.get(t.departamento) || { pob: 0, ocu: 0, des: 0 };
+      curr.pob += Number(t.poblacion) || 0;
+      curr.ocu += Number(t.ocupado) || 0;
+      curr.des += Number(t.desocupado) || 0;
+      deptosMap.set(t.departamento, curr);
     }
 
-    return Array.from(deptosMap.values()).map((d) => {
-      const val = Number(d[selectedIndicador]) || 0;
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pea = vals.ocu + vals.des;
+      const val =
+        selectedIndicador === 'actividad'
+          ? vals.pob > 0 ? (pea / vals.pob) * 100 : 0
+          : selectedIndicador === 'empleo'
+          ? vals.pob > 0 ? (vals.ocu / vals.pob) * 100 : 0
+          : pea > 0 ? (vals.des / pea) * 100 : 0;
+
       return {
-        territoryName: d.departamento,
+        territoryName: depto,
         value: val,
         labelFormatted: `${val.toFixed(1).replace('.', ',')} %`,
-        subtitle: `Población: ${d.poblacion.toLocaleString('es-AR')} hab.`,
-        isSelected: deptosActivos.has(d.departamento),
+        subtitle: `Población (14+): ${vals.pob.toLocaleString('es-AR')} hab.`,
+        isSelected: deptosActivos.has(depto),
       };
     });
   }, [detalleOriginal, detalleFiltrado, selectedIndicador]);
@@ -158,15 +167,10 @@ export default function MercadoTrabajoPage() {
       };
     }
 
-    const deptosUnicos = new Map<string, TrabajoTerritory>();
-    for (const t of detalleFiltrado) {
-      if (!deptosUnicos.has(t.departamento)) {
-        deptosUnicos.set(t.departamento, t);
-      }
-    }
-
-    const lista = Array.from(deptosUnicos.values());
-    const pobTotal = lista.reduce((acc, d) => acc + (d.poblacion || 0), 0);
+    const pobTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.poblacion) || 0), 0);
+    const ocuTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.ocupado) || 0), 0);
+    const desTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.desocupado) || 0), 0);
+    const peaTotal = ocuTotal + desTotal;
 
     if (pobTotal === 0) {
       return {
@@ -177,9 +181,9 @@ export default function MercadoTrabajoPage() {
       };
     }
 
-    const pondAct = lista.reduce((acc, d) => acc + d.actividad * d.poblacion, 0) / pobTotal;
-    const pondEmp = lista.reduce((acc, d) => acc + d.empleo * d.poblacion, 0) / pobTotal;
-    const pondDes = lista.reduce((acc, d) => acc + d.desocupacion * d.poblacion, 0) / pobTotal;
+    const pondAct = (peaTotal / pobTotal) * 100;
+    const pondEmp = (ocuTotal / pobTotal) * 100;
+    const pondDes = peaTotal > 0 ? (desTotal / peaTotal) * 100 : 0;
 
     return {
       actividad: `${pondAct.toFixed(1).replace('.', ',')} %`,

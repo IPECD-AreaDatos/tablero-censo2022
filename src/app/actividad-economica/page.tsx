@@ -236,7 +236,7 @@ export default function ActividadEconomicaPage() {
                     <YAxis
                       type="category"
                       dataKey="sector"
-                      width={220}
+                      width={235}
                       stroke="#475569"
                       fontSize={10}
                       tickLine={false}
@@ -256,7 +256,7 @@ export default function ActividadEconomicaPage() {
               </div>
             ) : (
               <div style={{ maxHeight: 520, overflow: 'auto', borderRadius: 8, border: '1px solid #e2e8f0' }}>
-                <table style={{ minWidth: 1520, width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.76rem' }}>
+                <table style={{ minWidth: 1650, width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '0.76rem' }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 3, background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>
                     <tr style={{ color: '#475569', textAlign: 'right' }}>
                       <th style={{ position: 'sticky', left: 0, zIndex: 4, minWidth: 160, padding: '11px 12px', background: '#fff', textAlign: 'left', borderRight: '1px solid #f1f5f9' }}>Departamento</th>

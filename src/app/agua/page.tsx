@@ -26,7 +26,7 @@ import {
   LabelList,
 } from 'recharts';
 
-type TipoAgua = 'red_publica' | 'bomba_motor' | 'pozo_sin_bomba' | 'cisterna_acequia';
+type TipoAgua = 'red_publica' | 'bomba_motor' | 'pozo_sin_bomba' | 'cisterna_acequia' | 'otra';
 type SortField = 'departamento' | 'municipio' | 'total_viviendas' | 'valor_agua' | 'pct_agua';
 type SortOrder = 'asc' | 'desc';
 
@@ -39,10 +39,12 @@ type AguaTerritory = {
   bomba_motor: number;
   pozo_sin_bomba: number;
   cisterna_acequia: number;
+  otra: number;
   pct_red_publica: string;
   pct_bomba_motor: string;
   pct_pozo_sin_bomba: string;
   pct_cisterna_acequia: string;
+  pct_otra: string;
 };
 
 type VisibleAguaTerritory = AguaTerritory & { locationKey: string };
@@ -87,9 +89,10 @@ export default function AguaPage() {
 
   const labelsAgua: Record<TipoAgua, string> = {
     red_publica: 'Red Pública (Agua Corriente)',
-    bomba_motor: 'Perforación con Bomba a Motor',
-    pozo_sin_bomba: 'Pozo o Bomba Manual',
+    bomba_motor: 'Bomba a Motor o Manual',
+    pozo_sin_bomba: 'Pozo sin Bomba',
     cisterna_acequia: 'Cisterna, Canal o Acequia',
+    otra: 'Otra Procedencia',
   };
 
   const territoriosVisibles = useMemo<VisibleAguaTerritory[]>(() => {
@@ -247,6 +250,8 @@ export default function AguaPage() {
         return '#d97706';
       case 'cisterna_acequia':
         return '#0284c7';
+      case 'otra':
+        return '#64748b';
     }
   };
 
@@ -260,6 +265,8 @@ export default function AguaPage() {
         return 'amber';
       case 'cisterna_acequia':
         return 'blue';
+      case 'otra':
+        return 'amber';
     }
   };
 
@@ -303,7 +310,7 @@ export default function AguaPage() {
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Perforación con Bomba Motor</span>
+          <span className="metricLabel">Bomba a Motor o Manual</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
             {data ? kpisDinamicos.pctBombaMotor : '...'}
           </span>
@@ -313,7 +320,7 @@ export default function AguaPage() {
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #d97706' }}>
-          <span className="metricLabel">Pozo o Bomba Manual</span>
+          <span className="metricLabel">Pozo sin Bomba</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
             {data ? kpisDinamicos.pctPozo : '...'}
           </span>
@@ -340,7 +347,7 @@ export default function AguaPage() {
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
           PROCEDENCIA DEL AGUA:
         </span>
-        {(['red_publica', 'bomba_motor', 'pozo_sin_bomba', 'cisterna_acequia'] as TipoAgua[]).map((t) => (
+        {(['red_publica', 'bomba_motor', 'pozo_sin_bomba', 'cisterna_acequia', 'otra'] as TipoAgua[]).map((t) => (
           <button
             key={t}
             onClick={() => setSelectedTipo(t)}

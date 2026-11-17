@@ -1,110 +1,103 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { queryDwh, queryDatalake } from '@/lib/db';
+import { NextResponse } from 'next/server';
+import { queryDatalake } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
-    const [rowsDeptos, rowsMunicipios] = await Promise.all([
-      queryDwh(`
+    const [rowsTasas, rowsCat] = await Promise.all([
+      queryDatalake(`
         SELECT 
-          departamento,
-          poblacion_2022::bigint as poblacion,
-          tasa_de_actividad::numeric as actividad,
-          tasa_de_empleo::numeric as empleo,
-          tasa_de_desocup::numeric as desocupacion,
-          categoria_ocupacional_servicio_domestico::bigint as servicio_domestico,
-          categoria_ocupacional_empleado_u_obrero::bigint as empleado_obrero,
-          categoria_ocupacional_cuenta_propia::bigint as cuenta_propia,
-          categoria_ocupacional_patron_o_empleador::bigint as patron_empleador,
-          categoria_ocupacional_trabajador_familiar::bigint as trabajador_familiar
-        FROM censo_ipecd_departamentos
-        ORDER BY poblacion_2022 DESC
+          COALESCE(p.depto_p18, 'Sin Departamento') AS departamento,
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') AS municipio,
+          SUM(COALESCE(b.ocupado, 0))::bigint AS ocupado,
+          SUM(COALESCE(b.desocupado, 0))::bigint AS desocupado,
+          SUM(COALESCE(b.inactivo, 0))::bigint AS inactivo,
+          SUM(COALESCE(b.total_poblacion, 0))::bigint AS total_poblacion
+        FROM base_tasas_mercado_trabajo b
+        INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
+        GROUP BY 
+          COALESCE(p.depto_p18, 'Sin Departamento'), 
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
+        ORDER BY total_poblacion DESC
       `),
       queryDatalake(`
-        SELECT DISTINCT
-          COALESCE(depto_p18, 'Sin Departamento') as departamento,
-          COALESCE(municipio_p1, depto_p18, 'Sin Identificar') as municipio
-        FROM base_p18_corrientes
-        WHERE municipio_p1 IS NOT NULL
+        SELECT 
+          COALESCE(p.depto_p18, 'Sin Departamento') AS departamento,
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar') AS municipio,
+          SUM(COALESCE(c.empleado_u_obrero, 0))::bigint AS empleado_obrero,
+          SUM(COALESCE(c.cuenta_propia, 0))::bigint AS cuenta_propia,
+          SUM(COALESCE(c.patron_o_empleador, 0))::bigint AS patron_empleador,
+          SUM(COALESCE(c.trabajador_familiar, 0))::bigint AS trabajador_familiar,
+          SUM(COALESCE(c.servicio_domestico, 0))::bigint AS servicio_domestico
+        FROM base_categoria_ocupacional c
+        INNER JOIN base_p18_corrientes p ON c.codigo = p.codigo_p18
+        GROUP BY 
+          COALESCE(p.depto_p18, 'Sin Departamento'), 
+          COALESCE(p.municipio_p1, p.depto_p18, 'Sin Identificar')
       `).catch(() => []),
     ]);
 
-    const filaTotal = rowsDeptos.find((r: any) => (r.departamento || '').toLowerCase().includes('total'));
-    const soloDeptos = rowsDeptos.filter((r: any) => !(r.departamento || '').toLowerCase().includes('total'));
-
-    const formatPct = (val: any) => {
-      if (val === undefined || val === null) return '—';
-      let num = Number(val);
-      if (isNaN(num)) return '—';
-      if (num > 0 && num <= 1) num *= 100;
-      return `${num.toFixed(1).replace('.', ',')} %`;
-    };
-
-    const normalize = (s: string) =>
-      (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-
-    // Construimos la lista jerárquica (Municipio + Departamento) para el TerritoryFilter
-    const detalleTerritorial: any[] = [];
-
-    for (const d of soloDeptos) {
-      const munisDelDepto = rowsMunicipios.filter(
-        (m: any) => normalize(m.departamento) === normalize(d.departamento)
-      );
-
-      const baseMetrics = {
-        poblacion: Number(d.poblacion) || 0,
-        actividad: Number(d.actividad) || 0,
-        empleo: Number(d.empleo) || 0,
-        desocupacion: Number(d.desocupacion) || 0,
-        servicio_domestico: Number(d.servicio_domestico) || 0,
-        empleado_obrero: Number(d.empleado_obrero) || 0,
-        cuenta_propia: Number(d.cuenta_propia) || 0,
-        patron_empleador: Number(d.patron_empleador) || 0,
-        trabajador_familiar: Number(d.trabajador_familiar) || 0,
-      };
-
-      if (munisDelDepto.length > 0) {
-        for (const m of munisDelDepto) {
-          detalleTerritorial.push({
-            departamento: d.departamento,
-            municipio: m.municipio,
-            nombre: m.municipio,
-            ...baseMetrics,
-          });
-        }
-      } else {
-        detalleTerritorial.push({
-          departamento: d.departamento,
-          municipio: d.departamento,
-          nombre: d.departamento,
-          ...baseMetrics,
-        });
-      }
+    const catMap = new Map<string, any>();
+    for (const c of rowsCat) {
+      catMap.set(`${c.departamento}::${c.municipio}`, c);
     }
+
+    let provOcupado = 0;
+    let provDesocupado = 0;
+    let provPoblacion = 0;
+
+    const detalle = rowsTasas.map((r) => {
+      const ocupado = Number(r.ocupado) || 0;
+      const desocupado = Number(r.desocupado) || 0;
+      const inactivo = Number(r.inactivo) || 0;
+      const pob = Number(r.total_poblacion) || ocupado + desocupado + inactivo;
+      const pea = ocupado + desocupado;
+
+      provOcupado += ocupado;
+      provDesocupado += desocupado;
+      provPoblacion += pob;
+
+      const actividad = pob > 0 ? (pea / pob) * 100 : 0;
+      const empleo = pob > 0 ? (ocupado / pob) * 100 : 0;
+      const desocupacion = pea > 0 ? (desocupado / pea) * 100 : 0;
+
+      const cat = catMap.get(`${r.departamento}::${r.municipio}`);
+
+      return {
+        departamento: r.departamento,
+        municipio: r.municipio,
+        nombre: r.municipio,
+        ocupado,
+        desocupado,
+        inactivo,
+        poblacion: pob,
+        actividad: Number(actividad.toFixed(1)),
+        empleo: Number(empleo.toFixed(1)),
+        desocupacion: Number(desocupacion.toFixed(1)),
+        servicio_domestico: Number(cat?.servicio_domestico) || 0,
+        empleado_obrero: Number(cat?.empleado_obrero ?? ocupado) || 0,
+        cuenta_propia: Number(cat?.cuenta_propia ?? desocupado) || 0,
+        patron_empleador: Number(cat?.patron_empleador) || 0,
+        trabajador_familiar: Number(cat?.trabajador_familiar) || 0,
+      };
+    });
+
+    const provPea = provOcupado + provDesocupado;
+    const provAct = provPoblacion > 0 ? (provPea / provPoblacion) * 100 : 0;
+    const provEmp = provPoblacion > 0 ? (provOcupado / provPoblacion) * 100 : 0;
+    const provDes = provPea > 0 ? (provDesocupado / provPea) * 100 : 0;
 
     return NextResponse.json({
       totalesProvincia: {
-        actividad: filaTotal ? formatPct(filaTotal.actividad) : '56,0 %',
-        empleo: filaTotal ? formatPct(filaTotal.empleo) : '50,8 %',
-        desocupacion: filaTotal ? formatPct(filaTotal.desocupacion) : '9,2 %',
+        actividad: `${provAct.toFixed(1).replace('.', ',')} %`,
+        empleo: `${provEmp.toFixed(1).replace('.', ',')} %`,
+        desocupacion: `${provDes.toFixed(1).replace('.', ',')} %`,
       },
-      departamentos: soloDeptos.map((r: any) => ({
-        departamento: r.departamento,
-        poblacion: Number(r.poblacion) || 0,
-        actividad: Number(r.actividad) || 0,
-        empleo: Number(r.empleo) || 0,
-        desocupacion: Number(r.desocupacion) || 0,
-        servicio_domestico: Number(r.servicio_domestico) || 0,
-        empleado_obrero: Number(r.empleado_obrero) || 0,
-        cuenta_propia: Number(r.cuenta_propia) || 0,
-        patron_empleador: Number(r.patron_empleador) || 0,
-        trabajador_familiar: Number(r.trabajador_familiar) || 0,
-      })),
-      detalle: detalleTerritorial,
+      detalle,
     });
   } catch (error) {
     console.error('Error al consultar mercado de trabajo:', error);
-    return NextResponse.json({ error: 'Error interno' }, { status: 500 });
+    return NextResponse.json({ error: 'Error al consultar datos' }, { status: 500 });
   }
 }

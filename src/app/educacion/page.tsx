@@ -3,17 +3,20 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
+import { InfoTooltip } from '@/components/InfoTooltip';
+import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
+import CorrientesMap from '@/components/CorrientesMap';
 import { 
   GraduationCap, 
   ChevronLeft, 
   BarChart2, 
   Table as TableIcon, 
+  Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
-import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import {
   ResponsiveContainer,
   BarChart,
@@ -24,9 +27,23 @@ import {
   LabelList,
 } from 'recharts';
 
-type NivelEducativo = 'secundaria_incompleta' | 'secundaria_completa' | 'superior_completo';
-type SortField = 'departamento' | 'municipio' | 'poblacion_2022' | 'valor' | 'porcentaje';
+type NivelEducativo =
+  | 'secundaria_incompleta'
+  | 'secundaria_completa'
+  | 'superior_completo'
+  | 'ignorado';
+
+type SortField =
+  | 'departamento'
+  | 'municipio'
+  | 'poblacion_2022'
+  | 'secundaria_incompleta'
+  | 'secundaria_completa'
+  | 'superior_completo'
+  | 'ignorado';
+
 type SortOrder = 'asc' | 'desc';
+
 type TerritorioEducacion = {
   departamento: string;
   municipio: string;
@@ -34,36 +51,68 @@ type TerritorioEducacion = {
   secundaria_incompleta: number;
   secundaria_completa: number;
   superior_completo: number;
+  ignorado: number;
   pct_secundaria_incompleta: number;
   pct_secundaria_completa: number;
   pct_superior_completo: number;
+  pct_ignorado: number;
 };
+
 type EducacionData = {
   totalMayores25: number;
   comparativa: Record<'provincia' | 'pais' | 'nea', Record<NivelEducativo, number | null>>;
   territorios: TerritorioEducacion[];
 };
 
-const nivelesEducativos: { key: NivelEducativo; label: string }[] = [
-  { key: 'secundaria_incompleta', label: 'Secundaria incompleta' },
-  { key: 'secundaria_completa', label: 'Secundaria completa' },
-  { key: 'superior_completo', label: 'Superior / universitario completo' },
+const nivelesEducativos: { key: NivelEducativo; label: string; shortLabel: string; tooltip: string }[] = [
+  {
+    key: 'secundaria_incompleta',
+    label: 'Secundaria incompleta',
+    shortLabel: 'Secundaria incompleta',
+    tooltip:
+      'Agrupa a la población de 25 años y más sin instrucción, con primaria incompleta, primaria completa y secundaria incompleta.',
+  },
+  {
+    key: 'secundaria_completa',
+    label: 'Secundaria completa',
+    shortLabel: 'Secundaria completa',
+    tooltip:
+      'Agrupa a la población de 25 años y más con secundaria completa, terciario incompleto y universitario incompleto.',
+  },
+  {
+    key: 'superior_completo',
+    label: 'Superior / universitario completo',
+    shortLabel: 'Superior / univ. completo',
+    tooltip:
+      'Agrupa a la población de 25 años y más con nivel terciario completo, universitario completo y posgrado (incompleto o completo).',
+  },
+  {
+    key: 'ignorado',
+    label: 'Ignorado',
+    shortLabel: 'Ignorado',
+    tooltip:
+      'Población de 25 años y más cuyo nivel educativo máximo alcanzado figura como ignorado o sin especificar en el Censo 2022.',
+  },
 ];
+
 const EMPTY_TERRITORIOS: TerritorioEducacion[] = [];
 
-const valorNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) => territorio[nivel];
-const porcentajeNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) => territorio[`pct_${nivel}`];
-const formatPct = (value: number | null | undefined) => value === null || value === undefined
-  ? '—'
-  : `${(value * 100).toFixed(1).replace('.', ',')} %`;
+const valorNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) =>
+  Number(territorio[nivel]) || 0;
+const porcentajeNivel = (territorio: TerritorioEducacion, nivel: NivelEducativo) =>
+  Number(territorio[`pct_${nivel}`]) || 0;
+const formatPct = (value: number | null | undefined) =>
+  value === null || value === undefined
+    ? '—'
+    : `${(value * 100).toFixed(1).replace('.', ',')} %`;
 
 export default function EducacionPage() {
   const [data, setData] = useState<EducacionData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
   const [selectedNivel, setSelectedNivel] = useState<NivelEducativo>('secundaria_completa');
-  const [sortField, setSortField] = useState<SortField>('porcentaje');
+  const [sortField, setSortField] = useState<SortField>('poblacion_2022');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
@@ -84,7 +133,11 @@ export default function EducacionPage() {
 
   const territoriosBase = useMemo(() => data?.territorios ?? EMPTY_TERRITORIOS, [data]);
   const territoriosFiltrados = useMemo(
-    () => territoriosBase.filter((territorio) => selectedLocations === null || selectedLocations.includes(territoryKey(territorio))),
+    () =>
+      territoriosBase.filter(
+        (territorio) =>
+          selectedLocations === null || selectedLocations.includes(territoryKey(territorio)),
+      ),
     [territoriosBase, selectedLocations],
   );
 
@@ -96,11 +149,90 @@ export default function EducacionPage() {
     }));
   }, [territoriosFiltrados]);
 
-  const nivelSeleccionado = nivelesEducativos.find((nivel) => nivel.key === selectedNivel) || nivelesEducativos[1];
-  const totalSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + territorio.poblacion_2022, 0);
-  const totalNivelSeleccionado = territoriosFiltrados.reduce((total, territorio) => total + valorNivel(territorio, selectedNivel), 0);
-  const porcentajeProvinciaSeleccion = totalSeleccionado > 0 ? totalNivelSeleccionado / totalSeleccionado : null;
-  const seleccionCompleta = selectedLocations === null || selectedLocations.length === territoriosBase.length;
+  const nivelSeleccionado =
+    nivelesEducativos.find((nivel) => nivel.key === selectedNivel) || nivelesEducativos[1];
+  const totalSeleccionado = territoriosFiltrados.reduce(
+    (total, territorio) => total + (Number(territorio.poblacion_2022) || 0),
+    0,
+  );
+  const totalNivelSeleccionado = territoriosFiltrados.reduce(
+    (total, territorio) => total + valorNivel(territorio, selectedNivel),
+    0,
+  );
+  const porcentajeProvinciaSeleccion =
+    totalSeleccionado > 0 ? totalNivelSeleccionado / totalSeleccionado : null;
+  const seleccionCompleta =
+    selectedLocations === null || selectedLocations.length === territoriosBase.length;
+
+  // Totales de las 4 categorías para el pie de la tabla
+  const totalesTabla = useMemo(() => {
+    const pob = territoriosVisibles.reduce((acc, r) => acc + (Number(r.poblacion_2022) || 0), 0);
+    const secInc = territoriosVisibles.reduce((acc, r) => acc + (Number(r.secundaria_incompleta) || 0), 0);
+    const secComp = territoriosVisibles.reduce((acc, r) => acc + (Number(r.secundaria_completa) || 0), 0);
+    const supComp = territoriosVisibles.reduce((acc, r) => acc + (Number(r.superior_completo) || 0), 0);
+    const ign = territoriosVisibles.reduce((acc, r) => acc + (Number(r.ignorado) || 0), 0);
+    const pct = (v: number) => (pob > 0 ? ((v / pob) * 100).toFixed(1).replace('.', ',') : '0,0');
+    return {
+      pob,
+      secInc,
+      secComp,
+      supComp,
+      ign,
+      pctSecInc: pct(secInc),
+      pctSecComp: pct(secComp),
+      pctSupComp: pct(supComp),
+      pctIgn: pct(ign),
+    };
+  }, [territoriosVisibles]);
+
+  // Datos consolidados por departamento para el Mapa
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(territoriosFiltrados.map((t) => t.departamento));
+    const deptosMap = new Map<string, { pob: number; val: number }>();
+
+    for (const t of territoriosBase) {
+      const curr = deptosMap.get(t.departamento) || { pob: 0, val: 0 };
+      curr.pob += Number(t.poblacion_2022) || 0;
+      curr.val += Number(valorNivel(t, selectedNivel)) || 0;
+      deptosMap.set(t.departamento, curr);
+    }
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pct = vals.pob > 0 ? (vals.val / vals.pob) * 100 : 0;
+      return {
+        territoryName: depto,
+        value: pct,
+        labelFormatted: `${pct.toFixed(1).replace('.', ',')} %`,
+        subtitle: `${vals.val.toLocaleString('es-AR')} de ${vals.pob.toLocaleString('es-AR')} personas (25+)`,
+        isSelected: deptosActivos.has(depto),
+      };
+    });
+  }, [territoriosBase, territoriosFiltrados, selectedNivel]);
+
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+    const target = norm(deptoName);
+
+    const keysDelDepto = territoriosBase
+      .filter((t) => norm(t.departamento) === target)
+      .map(territoryKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedLocations((prev) => {
+      const current = prev ?? territoriosBase.map(territoryKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
 
   const datosGrafico = useMemo(() => {
     return [...territoriosVisibles]
@@ -141,25 +273,21 @@ export default function EducacionPage() {
     );
   };
 
-  // Datos ordenados exclusivamente para la tabla
+  // Datos ordenados para la tabla completa con las 4 opciones
   const tablaOrdenada = useMemo(() => {
     if (!territoriosVisibles.length) return [];
-    return territoriosVisibles.map((territorio) => ({
-      ...territorio,
-      valor: valorNivel(territorio, selectedNivel),
-      porcentaje: porcentajeNivel(territorio, selectedNivel),
-    })).sort((a, b) => {
+    return [...territoriosVisibles].sort((a, b) => {
       if (sortField === 'departamento' || sortField === 'municipio') {
         const aVal = (a[sortField] || '').toLowerCase();
         const bVal = (b[sortField] || '').toLowerCase();
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      const aVal = sortField === 'valor' ? a.valor : sortField === 'porcentaje' ? a.porcentaje : a.poblacion_2022;
-      const bVal = sortField === 'valor' ? b.valor : sortField === 'porcentaje' ? b.porcentaje : b.poblacion_2022;
+      const aVal = Number(a[sortField]) || 0;
+      const bVal = Number(b[sortField]) || 0;
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [territoriosVisibles, sortField, sortOrder, selectedNivel]);
+  }, [territoriosVisibles, sortField, sortOrder]);
 
   return (
     <div className="container">
@@ -178,7 +306,7 @@ export default function EducacionPage() {
 
       {/* Tarjetas KPI Superiores */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
-        <div className="card" style={{ padding: '14px 18px' }}>
+        <div className="card" style={{ padding: '14px 18px', overflow: 'visible' }}>
           <span className="metricLabel">{seleccionCompleta ? 'Total Mayores de 25 Años' : 'Mayores de 25 seleccionados'}</span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
             {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
@@ -186,24 +314,35 @@ export default function EducacionPage() {
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Censo 2022 · población de 25 años y más</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">% {nivelSeleccionado.label} ({seleccionCompleta ? 'Provincia' : 'Selección'})</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {nivelSeleccionado.label} ({seleccionCompleta ? 'Provincia' : 'Selección'})
+            <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
             {seleccionCompleta ? formatPct(data?.comparativa.provincia?.[selectedNivel]) : formatPct(porcentajeProvinciaSeleccion)}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{seleccionCompleta ? 'Corrientes' : 'Territorios seleccionados'}</span>
+          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+            {data ? `${totalNivelSeleccionado.toLocaleString('es-AR')} personas (${seleccionCompleta ? 'Corrientes' : 'Selección'})` : ''}
+          </span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">% {nivelSeleccionado.label} (País)</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {nivelSeleccionado.label} (País)
+            <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
             {formatPct(data?.comparativa.pais?.[selectedNivel])}
           </span>
           <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
         </div>
 
-        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b' }}>
-          <span className="metricLabel">% {nivelSeleccionado.label} (NEA)</span>
+        <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b', overflow: 'visible' }}>
+          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
+            % {nivelSeleccionado.label} (NEA)
+            <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </span>
           <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
             {formatPct(data?.comparativa.nea?.[selectedNivel])}
           </span>
@@ -211,28 +350,54 @@ export default function EducacionPage() {
         </div>
       </div>
 
-      {/* Selector de Nivel Educativo */}
+      {/* Selector de Nivel Educativo (4 Categorías) */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, background: '#ffffff', padding: '10px 16px', borderRadius: 12, border: '1px solid #cbd5e1', marginTop: 12 }}>
-        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>NIVEL A VISUALIZAR:</span>
+        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8, display: 'inline-flex', alignItems: 'center' }}>
+          NIVEL A VISUALIZAR
+          <InfoTooltip text={nivelSeleccionado.tooltip} />
+          <span style={{ marginLeft: 4 }}>:</span>
+        </span>
         {nivelesEducativos.map((nivel) => (
           <button
             key={nivel.key}
-            onClick={() => setSelectedNivel(nivel.key)}
+            onClick={() => {
+              setSelectedNivel(nivel.key);
+              if (viewMode === 'tabla') {
+                setSortField(nivel.key);
+                setSortOrder('desc');
+              }
+            }}
             aria-pressed={selectedNivel === nivel.key}
-            style={{ border: '1px solid', borderColor: selectedNivel === nivel.key ? '#10b981' : '#cbd5e1', backgroundColor: selectedNivel === nivel.key ? '#14203b' : '#f8fafc', color: selectedNivel === nivel.key ? '#ffffff' : '#334155', padding: '6px 14px', borderRadius: 8, fontSize: '0.82rem', fontWeight: selectedNivel === nivel.key ? 700 : 500, cursor: 'pointer' }}
+            style={{
+              border: '1px solid',
+              borderColor: selectedNivel === nivel.key ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedNivel === nivel.key ? '#14203b' : '#f8fafc',
+              color: selectedNivel === nivel.key ? '#ffffff' : '#334155',
+              padding: '6px 14px',
+              borderRadius: 8,
+              fontSize: '0.82rem',
+              fontWeight: selectedNivel === nivel.key ? 700 : 500,
+              cursor: 'pointer',
+            }}
           >
             {nivel.label}
           </button>
         ))}
       </div>
 
-      {/* Gráfico / Tabla + Filtro Lateral */}
+      {/* Gráfico / Tabla / Mapa + Filtro Lateral */}
       <div className="population-layout">
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
             <div className="cardTitle">
               <GraduationCap className="w-4 h-4 text-emerald-400" />
-              <span>{nivelSeleccionado.label} en mayores de 25 por municipio · hasta 25 principales</span>
+              <span>
+                {viewMode === 'tabla'
+                  ? 'Distribución completa por nivel educativo en mayores de 25 años por municipio'
+                  : `${nivelSeleccionado.label} en mayores de 25 por ${
+                      viewMode === 'mapa' ? 'departamento' : 'municipio · hasta 25 principales'
+                    }`}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -274,6 +439,25 @@ export default function EducacionPage() {
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
               </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
+              </button>
             </div>
           </div>
 
@@ -293,8 +477,8 @@ export default function EducacionPage() {
                   >
                     <XAxis
                       type="number"
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${value}%`}
+                      domain={[0, selectedNivel === 'ignorado' ? 'auto' : 100]}
+                      tickFormatter={(value) => `${Number(value).toFixed(selectedNivel === 'ignorado' ? 1 : 0)}%`}
                       stroke="#94a3b8"
                       fontSize={11}
                       label={{
@@ -345,7 +529,11 @@ export default function EducacionPage() {
                         fontSize: '0.82rem',
                       }}
                     />
-                    <Bar dataKey="porcentaje" fill="#047857" radius={[0, 4, 4, 0]}>
+                    <Bar
+                      dataKey="porcentaje"
+                      fill={selectedNivel === 'ignorado' ? '#64748b' : '#047857'}
+                      radius={[0, 4, 4, 0]}
+                    >
                       <LabelList
                         dataKey="porcentaje"
                         position="right"
@@ -358,6 +546,13 @@ export default function EducacionPage() {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={`% ${nivelSeleccionado.label}`}
+                colorScheme="emerald"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div
                 style={{
@@ -368,7 +563,7 @@ export default function EducacionPage() {
                   border: '1px solid #e2e8f0',
                 }}
               >
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <table style={{ width: '100%', minWidth: 920, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                   <thead
                     style={{
                       position: 'sticky',
@@ -379,7 +574,7 @@ export default function EducacionPage() {
                     }}
                   >
                     <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                      <th 
+                      <th
                         onClick={() => handleSort('departamento')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -388,7 +583,7 @@ export default function EducacionPage() {
                           {renderSortIcon('departamento')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('municipio')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -397,7 +592,7 @@ export default function EducacionPage() {
                           {renderSortIcon('municipio')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('poblacion_2022')}
                         style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -406,24 +601,25 @@ export default function EducacionPage() {
                           {renderSortIcon('poblacion_2022')}
                         </div>
                       </th>
-                      <th 
-                        onClick={() => handleSort('valor')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>{nivelSeleccionado.label}</span>
-                          {renderSortIcon('valor')}
-                        </div>
-                      </th>
-                      <th 
-                        onClick={() => handleSort('porcentaje')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>% del grupo 25+</span>
-                          {renderSortIcon('porcentaje')}
-                        </div>
-                      </th>
+                      {nivelesEducativos.map((nivel) => (
+                        <th
+                          key={nivel.key}
+                          onClick={() => handleSort(nivel.key)}
+                          style={{
+                            padding: '10px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedNivel === nivel.key ? '#f0fdf4' : '#ffffff',
+                            color: selectedNivel === nivel.key ? '#047857' : '#475569',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                            <span>{nivel.shortLabel}</span>
+                            {renderSortIcon(nivel.key)}
+                          </div>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
@@ -436,13 +632,100 @@ export default function EducacionPage() {
                         }}
                       >
                         <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
-                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.poblacion_2022.toLocaleString('es-AR')}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#047857' }}>{row.valor.toLocaleString('es-AR')}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>{row.porcentaje.toFixed(1).replace('.', ',')} %</td>
+                        <td style={{ padding: '8px 12px', fontWeight: 600, color: '#14203b' }}>{row.municipio}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#14203b' }}>
+                          {row.poblacion_2022.toLocaleString('es-AR')}
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedNivel === 'secundaria_incompleta' ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700, color: '#047857' }}>
+                            {row.secundaria_incompleta.toLocaleString('es-AR')}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                            ({row.pct_secundaria_incompleta.toFixed(1).replace('.', ',')} %)
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedNivel === 'secundaria_completa' ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700, color: '#047857' }}>
+                            {row.secundaria_completa.toLocaleString('es-AR')}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                            ({row.pct_secundaria_completa.toFixed(1).replace('.', ',')} %)
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedNivel === 'superior_completo' ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700, color: '#047857' }}>
+                            {row.superior_completo.toLocaleString('es-AR')}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                            ({row.pct_superior_completo.toFixed(1).replace('.', ',')} %)
+                          </span>
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedNivel === 'ignorado' ? 'rgba(100, 116, 139, 0.08)' : 'transparent',
+                          }}
+                        >
+                          <span style={{ fontWeight: 700, color: '#475569' }}>
+                            {row.ignorado.toLocaleString('es-AR')}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                            ({row.pct_ignorado.toFixed(1).replace('.', ',')} %)
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr
+                      style={{
+                        position: 'sticky',
+                        bottom: 0,
+                        backgroundColor: '#eaf2f8',
+                        color: '#14203b',
+                        fontWeight: 800,
+                        borderTop: '2px solid #cbd5e1',
+                      }}
+                    >
+                      <td colSpan={2} style={{ padding: '10px 12px' }}>
+                        Total seleccionado
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pob.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.secInc.toLocaleString('es-AR')} ({totalesTabla.pctSecInc} %)
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.secComp.toLocaleString('es-AR')} ({totalesTabla.pctSecComp} %)
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.supComp.toLocaleString('es-AR')} ({totalesTabla.pctSupComp} %)
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.ign.toLocaleString('es-AR')} ({totalesTabla.pctIgn} %)
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}
