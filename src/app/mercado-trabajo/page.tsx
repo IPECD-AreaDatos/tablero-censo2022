@@ -35,6 +35,7 @@ type TrabajoTerritory = {
   departamento: string;
   municipio: string;
   nombre: string;
+  cantidad_registros: number;
   poblacion: number;
   actividad: number;
   empleo: number;
@@ -47,11 +48,15 @@ type TrabajoTerritory = {
 };
 
 type VisibleTrabajoTerritory = TrabajoTerritory & { locationKey: string };
+type MercadoTrabajoData = {
+  totalesProvincia: Record<IndicadorTrabajo, string>;
+  detalle: TrabajoTerritory[];
+};
 
 const EMPTY_TERRITORIES: TrabajoTerritory[] = [];
 
 export default function MercadoTrabajoPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<MercadoTrabajoData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedIndicador, setSelectedIndicador] = useState<IndicadorTrabajo>('actividad');
   const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
@@ -104,24 +109,35 @@ export default function MercadoTrabajoPage() {
   // Datos consolidados por departamento para el Mapa
   const datosMapa = useMemo(() => {
     const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
-    const deptosMap = new Map<string, { pob: number; ocu: number; des: number }>();
+    const deptosMap = new Map<
+      string,
+      { pob: number; registros: number; actividad: number; empleo: number; desocupacion: number }
+    >();
 
-    for (const t of detalleOriginal as any[]) {
-      const curr = deptosMap.get(t.departamento) || { pob: 0, ocu: 0, des: 0 };
+    for (const t of detalleOriginal) {
+      const curr = deptosMap.get(t.departamento) || {
+        pob: 0,
+        registros: 0,
+        actividad: 0,
+        empleo: 0,
+        desocupacion: 0,
+      };
+      const registros = Number(t.cantidad_registros) || 0;
       curr.pob += Number(t.poblacion) || 0;
-      curr.ocu += Number(t.ocupado) || 0;
-      curr.des += Number(t.desocupado) || 0;
+      curr.registros += registros;
+      curr.actividad += (Number(t.actividad) || 0) * registros;
+      curr.empleo += (Number(t.empleo) || 0) * registros;
+      curr.desocupacion += (Number(t.desocupacion) || 0) * registros;
       deptosMap.set(t.departamento, curr);
     }
 
     return Array.from(deptosMap.entries()).map(([depto, vals]) => {
-      const pea = vals.ocu + vals.des;
       const val =
         selectedIndicador === 'actividad'
-          ? vals.pob > 0 ? (pea / vals.pob) * 100 : 0
+          ? vals.registros > 0 ? vals.actividad / vals.registros : 0
           : selectedIndicador === 'empleo'
-          ? vals.pob > 0 ? (vals.ocu / vals.pob) * 100 : 0
-          : pea > 0 ? (vals.des / pea) * 100 : 0;
+          ? vals.registros > 0 ? vals.empleo / vals.registros : 0
+          : vals.registros > 0 ? vals.desocupacion / vals.registros : 0;
 
       return {
         territoryName: depto,
@@ -167,12 +183,12 @@ export default function MercadoTrabajoPage() {
       };
     }
 
-    const pobTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.poblacion) || 0), 0);
-    const ocuTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.ocupado) || 0), 0);
-    const desTotal = (detalleFiltrado as any[]).reduce((acc, d) => acc + (Number(d.desocupado) || 0), 0);
-    const peaTotal = ocuTotal + desTotal;
+    const registrosTotal = detalleFiltrado.reduce(
+      (acc, d) => acc + (Number(d.cantidad_registros) || 0),
+      0,
+    );
 
-    if (pobTotal === 0) {
+    if (registrosTotal === 0) {
       return {
         actividad: '—',
         empleo: '—',
@@ -181,9 +197,18 @@ export default function MercadoTrabajoPage() {
       };
     }
 
-    const pondAct = (peaTotal / pobTotal) * 100;
-    const pondEmp = (ocuTotal / pobTotal) * 100;
-    const pondDes = peaTotal > 0 ? (desTotal / peaTotal) * 100 : 0;
+    const pondAct = detalleFiltrado.reduce(
+      (acc, d) => acc + d.actividad * d.cantidad_registros,
+      0,
+    ) / registrosTotal;
+    const pondEmp = detalleFiltrado.reduce(
+      (acc, d) => acc + d.empleo * d.cantidad_registros,
+      0,
+    ) / registrosTotal;
+    const pondDes = detalleFiltrado.reduce(
+      (acc, d) => acc + d.desocupacion * d.cantidad_registros,
+      0,
+    ) / registrosTotal;
 
     return {
       actividad: `${pondAct.toFixed(1).replace('.', ',')} %`,
@@ -474,7 +499,7 @@ export default function MercadoTrabajoPage() {
                       }}
                     />
                     <Tooltip
-                      formatter={(val: any) => [
+                      formatter={(val) => [
                         `${Number(val).toFixed(1).replace('.', ',')} %`,
                         labelsIndicador[selectedIndicador].replace(' (%)', ''),
                       ]}
@@ -505,7 +530,7 @@ export default function MercadoTrabajoPage() {
                       <LabelList
                         dataKey={selectedIndicador}
                         position="right"
-                        formatter={(val: any) => `${Number(val).toFixed(1).replace('.', ',')} %`}
+                        formatter={(val) => `${Number(val).toFixed(1).replace('.', ',')} %`}
                         style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
                       />
                     </Bar>

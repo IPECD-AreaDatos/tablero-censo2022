@@ -13,7 +13,11 @@ export async function GET() {
           SUM(COALESCE(b.ocupado, 0))::bigint AS ocupado,
           SUM(COALESCE(b.desocupado, 0))::bigint AS desocupado,
           SUM(COALESCE(b.inactivo, 0))::bigint AS inactivo,
-          SUM(COALESCE(b.total_poblacion, 0))::bigint AS total_poblacion
+          SUM(COALESCE(b.total_poblacion, 0))::bigint AS total_poblacion,
+          COUNT(*)::int AS cantidad_registros,
+          AVG(b."%_actividad") AS tasa_actividad,
+          AVG(b."%_empleo") AS tasa_empleo,
+          AVG(b."%_desocupacion") AS tasa_desocupacion
         FROM base_tasas_mercado_trabajo b
         INNER JOIN base_p18_corrientes p ON b.codigo = p.codigo_p18
         GROUP BY 
@@ -38,29 +42,40 @@ export async function GET() {
       `).catch(() => []),
     ]);
 
-    const catMap = new Map<string, any>();
+    const catMap = new Map<
+      string,
+      {
+        servicio_domestico: number;
+        empleado_obrero: number;
+        cuenta_propia: number;
+        patron_empleador: number;
+        trabajador_familiar: number;
+      }
+    >();
     for (const c of rowsCat) {
       catMap.set(`${c.departamento}::${c.municipio}`, c);
     }
 
-    let provOcupado = 0;
-    let provDesocupado = 0;
-    let provPoblacion = 0;
+    let provRegistros = 0;
+    let provActividad = 0;
+    let provEmpleo = 0;
+    let provDesocupacion = 0;
 
     const detalle = rowsTasas.map((r) => {
       const ocupado = Number(r.ocupado) || 0;
       const desocupado = Number(r.desocupado) || 0;
       const inactivo = Number(r.inactivo) || 0;
       const pob = Number(r.total_poblacion) || ocupado + desocupado + inactivo;
-      const pea = ocupado + desocupado;
+      const cantidadRegistros = Number(r.cantidad_registros) || 0;
 
-      provOcupado += ocupado;
-      provDesocupado += desocupado;
-      provPoblacion += pob;
+      provRegistros += cantidadRegistros;
+      provActividad += (Number(r.tasa_actividad) || 0) * cantidadRegistros;
+      provEmpleo += (Number(r.tasa_empleo) || 0) * cantidadRegistros;
+      provDesocupacion += (Number(r.tasa_desocupacion) || 0) * cantidadRegistros;
 
-      const actividad = pob > 0 ? (pea / pob) * 100 : 0;
-      const empleo = pob > 0 ? (ocupado / pob) * 100 : 0;
-      const desocupacion = pea > 0 ? (desocupado / pea) * 100 : 0;
+      const actividad = (Number(r.tasa_actividad) || 0) * 100;
+      const empleo = (Number(r.tasa_empleo) || 0) * 100;
+      const desocupacion = (Number(r.tasa_desocupacion) || 0) * 100;
 
       const cat = catMap.get(`${r.departamento}::${r.municipio}`);
 
@@ -72,9 +87,10 @@ export async function GET() {
         desocupado,
         inactivo,
         poblacion: pob,
-        actividad: Number(actividad.toFixed(1)),
-        empleo: Number(empleo.toFixed(1)),
-        desocupacion: Number(desocupacion.toFixed(1)),
+        cantidad_registros: cantidadRegistros,
+        actividad,
+        empleo,
+        desocupacion,
         servicio_domestico: Number(cat?.servicio_domestico) || 0,
         empleado_obrero: Number(cat?.empleado_obrero ?? ocupado) || 0,
         cuenta_propia: Number(cat?.cuenta_propia ?? desocupado) || 0,
@@ -83,10 +99,9 @@ export async function GET() {
       };
     });
 
-    const provPea = provOcupado + provDesocupado;
-    const provAct = provPoblacion > 0 ? (provPea / provPoblacion) * 100 : 0;
-    const provEmp = provPoblacion > 0 ? (provOcupado / provPoblacion) * 100 : 0;
-    const provDes = provPea > 0 ? (provDesocupado / provPea) * 100 : 0;
+    const provAct = provRegistros > 0 ? (provActividad / provRegistros) * 100 : 0;
+    const provEmp = provRegistros > 0 ? (provEmpleo / provRegistros) * 100 : 0;
+    const provDes = provRegistros > 0 ? (provDesocupacion / provRegistros) * 100 : 0;
 
     return NextResponse.json({
       totalesProvincia: {
