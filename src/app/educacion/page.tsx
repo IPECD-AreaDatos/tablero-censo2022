@@ -164,6 +164,24 @@ export default function EducacionPage() {
   const seleccionCompleta =
     selectedLocations === null || selectedLocations.length === territoriosBase.length;
 
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (territoriosFiltrados.length === 0) return 'Sin selección';
+    if (territoriosFiltrados.length === 1) {
+      return territoriosFiltrados[0].municipio || territoriosFiltrados[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(new Set(territoriosFiltrados.map((t) => t.departamento)));
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = territoriosBase.filter((t) => t.departamento === deptosUnicos[0]);
+      if (todosDelDepto.length === territoriosFiltrados.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${territoriosFiltrados.length} municipios`;
+  }, [seleccionCompleta, territoriosFiltrados, territoriosBase]);
+
   // Totales de las 4 categorías para el pie de la tabla
   const totalesTabla = useMemo(() => {
     const pob = territoriosVisibles.reduce((acc, r) => acc + (Number(r.poblacion_2022) || 0), 0);
@@ -241,9 +259,39 @@ export default function EducacionPage() {
         valor: valorNivel(territorio, selectedNivel),
         porcentaje: porcentajeNivel(territorio, selectedNivel),
       }))
-      .sort((a, b) => b.porcentaje - a.porcentaje)
-      .slice(0, 25);
+      .sort((a, b) => b.porcentaje - a.porcentaje);
   }, [territoriosVisibles, selectedNivel]);
+
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  const { xMax, xTicks } = useMemo(() => {
+    if (selectedNivel !== 'ignorado') {
+      return { xMax: 100, xTicks: [0, 25, 50, 75, 100] };
+    }
+    const maxVal = datosGrafico.reduce((max, item) => Math.max(max, Number(item.porcentaje) || 0), 0);
+    if (maxVal === 0) return { xMax: 4, xTicks: [0, 1, 2, 3, 4] };
+
+    const targetMax = maxVal * 1.15;
+    const rawStep = targetMax / 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 : 10;
+
+    const niceStep = niceFraction * magnitude;
+    const top = niceStep * 4;
+    return {
+      xMax: top,
+      xTicks: [0, niceStep, niceStep * 2, niceStep * 3, top],
+    };
+  }, [datosGrafico, selectedNivel]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -307,46 +355,68 @@ export default function EducacionPage() {
       {/* Tarjetas KPI Superiores */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px', overflow: 'visible' }}>
-          <span className="metricLabel">{seleccionCompleta ? 'Total Mayores de 25 Años' : 'Mayores de 25 seleccionados'}</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Total Mayores de 25 Años
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Censo 2022 · población de 25 años y más</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Censo 2022 · población de 25 años y más</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {nivelSeleccionado.label} ({seleccionCompleta ? 'Provincia' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {nivelSeleccionado.label}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
-            {seleccionCompleta ? formatPct(data?.comparativa.provincia?.[selectedNivel]) : formatPct(porcentajeProvinciaSeleccion)}
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
+            {seleccionCompleta
+              ? formatPct(data?.comparativa.provincia?.[selectedNivel])
+              : formatPct(porcentajeProvinciaSeleccion)}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {data ? `${totalNivelSeleccionado.toLocaleString('es-AR')} personas (${seleccionCompleta ? 'Corrientes' : 'Selección'})` : ''}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {data ? `${totalNivelSeleccionado.toLocaleString('es-AR')} personas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {nivelSeleccionado.label} (País)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+              Total País
+            </span>
             <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {nivelSeleccionado.label}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {formatPct(data?.comparativa.pais?.[selectedNivel])}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>República Argentina</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {nivelSeleccionado.label} (NEA)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b45309', lineHeight: 1.2 }}>
+              Región NEA
+            </span>
             <InfoTooltip text={nivelSeleccionado.tooltip} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {nivelSeleccionado.label}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b45309' }}>
             {formatPct(data?.comparativa.nea?.[selectedNivel])}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Nordeste Argentino</span>
         </div>
       </div>
 
@@ -395,7 +465,7 @@ export default function EducacionPage() {
                 {viewMode === 'tabla'
                   ? 'Distribución completa por nivel educativo en mayores de 25 años por municipio'
                   : `${nivelSeleccionado.label} en mayores de 25 por ${
-                      viewMode === 'mapa' ? 'departamento' : 'municipio · hasta 25 principales'
+                      viewMode === 'mapa' ? 'departamento' : 'municipio'
                     }`}
               </span>
             </div>
@@ -468,83 +538,166 @@ export default function EducacionPage() {
                 <span>Calculando indicadores educativos...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 620 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 55, left: 18, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      domain={[0, selectedNivel === 'ignorado' ? 'auto' : 100]}
-                      tickFormatter={(value) => `${Number(value).toFixed(selectedNivel === 'ignorado' ? 1 : 0)}%`}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: 'Población de 25 años y más con el nivel seleccionado (%)',
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="nombre"
-                      width={185}
-                      stroke="#475569"
-                      fontSize={10}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(value) => [`${Number(value).toFixed(1).replace('.', ',')} %`, nivelSeleccionado.label]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar
-                      dataKey="porcentaje"
-                      fill={selectedNivel === 'ignorado' ? '#64748b' : '#047857'}
-                      radius={[0, 4, 4, 0]}
                     >
-                      <LabelList
-                        dataKey="porcentaje"
-                        position="right"
-                        formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
-                        fill="#14203b"
-                        fontSize={10}
-                        fontWeight={700}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, xMax]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="nombre"
+                            width={185}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={10.5}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(value) => [
+                              `${Number(value).toFixed(1).replace('.', ',')} %`,
+                              nivelSeleccionado.label,
+                            ]}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar
+                            dataKey="porcentaje"
+                            fill={selectedNivel === 'ignorado' ? '#64748b' : '#047857'}
+                            radius={[0, 4, 4, 0]}
+                            barSize={18}
+                          >
+                            <LabelList
+                              dataKey="porcentaje"
+                              position="right"
+                              formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
+                              fill="#14203b"
+                              fontSize={10}
+                              fontWeight={700}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X con los mismos offsets exactos (32px eje Y + 6px margin + 185px YAxis = 223px a la izq, y 65px + 17px scrollbar = 82px a la der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 223,
+                    paddingRight: 82,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {xTicks.map((tick) => {
+                      const pct = xMax > 0 ? (tick / xMax) * 100 : 0;
+                      const label =
+                        selectedNivel === 'ignorado'
+                          ? `${Number(tick).toFixed(1).replace('.', ',')}%`
+                          : `${Math.round(tick)}%`;
+                      return (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${pct}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    Población de 25 años y más con el nivel seleccionado (%)
+                  </div>
+                </div>
               </div>
             ) : viewMode === 'mapa' ? (
               <CorrientesMap

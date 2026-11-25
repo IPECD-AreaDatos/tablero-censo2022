@@ -3,11 +3,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { apiPath } from '@/lib/api';
 import Link from 'next/link';
+import CorrientesMap from '@/components/CorrientesMap';
 import {
   HeartPulse,
   ChevronLeft,
   BarChart2,
   Table as TableIcon,
+  Map as MapIcon,
   Loader2,
   Search,
   ArrowUpDown,
@@ -64,11 +66,24 @@ const COLORES: Record<IndicadorSalud, string> = {
   sin_cobertura_pct: '#dc2626',
 };
 
-const normalizeText = (value: string) => value
-  .toLowerCase()
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim();
+const MAP_COLOR_SCHEMES: Record<IndicadorSalud, 'emerald' | 'blue' | 'red'> = {
+  obra_social_pct: 'emerald',
+  programas_pct: 'blue',
+  sin_cobertura_pct: 'red',
+};
+
+const COUNT_KEY_BY_INDICADOR: Record<IndicadorSalud, 'obra_social' | 'programas' | 'sin_cobertura'> = {
+  obra_social_pct: 'obra_social',
+  programas_pct: 'programas',
+  sin_cobertura_pct: 'sin_cobertura',
+};
+
+const normalizeText = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
 
 const municipioKey = (municipio: Pick<MunicipioSalud, 'departamento' | 'municipio'>) =>
   `${municipio.departamento}::${municipio.municipio}`;
@@ -79,7 +94,7 @@ export default function SaludPage() {
   const [data, setData] = useState<SaludData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedIndicador, setSelectedIndicador] = useState<IndicadorSalud>('obra_social_pct');
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMunicipios, setSelectedMunicipios] = useState<string[] | null>(null);
   const [sortField, setSortField] = useState<SortField>('obra_social_pct');
@@ -115,19 +130,25 @@ export default function SaludPage() {
       .sort((a, b) => a.departamento.localeCompare(b.departamento, 'es', { sensitivity: 'base' }))
       .map((grupo) => ({
         ...grupo,
-        municipios: grupo.municipios.sort((a, b) => a.municipio.localeCompare(b.municipio, 'es', { sensitivity: 'base' })),
+        municipios: grupo.municipios.sort((a, b) =>
+          a.municipio.localeCompare(b.municipio, 'es', { sensitivity: 'base' }),
+        ),
       }));
   }, [municipios]);
 
   const gruposFiltrados = useMemo(() => {
     const query = normalizeText(searchTerm);
-    return gruposDepartamentos.map((grupo) => {
-      if (!query || normalizeText(grupo.departamento).includes(query)) return grupo;
-      return {
-        ...grupo,
-        municipios: grupo.municipios.filter((municipio) => normalizeText(municipio.municipio).includes(query)),
-      };
-    }).filter((grupo) => grupo.municipios.length > 0);
+    return gruposDepartamentos
+      .map((grupo) => {
+        if (!query || normalizeText(grupo.departamento).includes(query)) return grupo;
+        return {
+          ...grupo,
+          municipios: grupo.municipios.filter((municipio) =>
+            normalizeText(municipio.municipio).includes(query),
+          ),
+        };
+      })
+      .filter((grupo) => grupo.municipios.length > 0);
   }, [gruposDepartamentos, searchTerm]);
 
   const datosBaseActivos = useMemo(() => {
@@ -163,21 +184,72 @@ export default function SaludPage() {
       .sort((a, b) => b[selectedIndicador] - a[selectedIndicador])
       .map((municipio) => ({
         ...municipio,
-        municipio_label: (cantidadesPorNombre.get(normalizeText(municipio.municipio)) || 0) > 1
-          ? `${municipio.municipio} (${municipio.departamento})`
-          : municipio.municipio,
+        municipio_label:
+          (cantidadesPorNombre.get(normalizeText(municipio.municipio)) || 0) > 1
+            ? `${municipio.municipio} (${municipio.departamento})`
+            : municipio.municipio,
       }));
   }, [datosBaseActivos, selectedIndicador]);
 
-  const datosTabla = useMemo(() => [...datosBaseActivos].sort((a, b) => {
-    let comparison: number;
-    if (sortField === 'departamento' || sortField === 'municipio') {
-      comparison = a[sortField].localeCompare(b[sortField], 'es', { sensitivity: 'base' });
-    } else {
-      comparison = a[sortField] - b[sortField];
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  // Datos consolidados por departamento para el Mapa
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(datosBaseActivos.map((m) => m.departamento || 'Sin departamento'));
+    const deptosMap = new Map<string, { pob: number; count: number }>();
+    const countKey = COUNT_KEY_BY_INDICADOR[selectedIndicador];
+
+    for (const m of municipios) {
+      const depto = m.departamento || 'Sin departamento';
+      const curr = deptosMap.get(depto) || { pob: 0, count: 0 };
+      curr.pob += Number(m.poblacion) || 0;
+      curr.count += Number(m[countKey]) || 0;
+      deptosMap.set(depto, curr);
     }
-    return sortOrder === 'asc' ? comparison : -comparison;
-  }), [datosBaseActivos, sortField, sortOrder]);
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pct = vals.pob > 0 ? (vals.count / vals.pob) * 100 : 0;
+      return {
+        territoryName: depto,
+        value: pct,
+        labelFormatted: `${pct.toFixed(1).replace('.', ',')} %`,
+        subtitle: `${vals.count.toLocaleString('es-AR')} de ${vals.pob.toLocaleString('es-AR')} personas`,
+        isSelected: deptosActivos.has(depto),
+      };
+    });
+  }, [municipios, datosBaseActivos, selectedIndicador]);
+
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const target = normalizeText(deptoName);
+    const keysDelDepto = municipios
+      .filter((m) => normalizeText(m.departamento || '') === target)
+      .map(municipioKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedMunicipios((prev) => {
+      const current = prev ?? municipios.map(municipioKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
+
+  const datosTabla = useMemo(
+    () =>
+      [...datosBaseActivos].sort((a, b) => {
+        let comparison: number;
+        if (sortField === 'departamento' || sortField === 'municipio') {
+          comparison = a[sortField].localeCompare(b[sortField], 'es', { sensitivity: 'base' });
+        } else {
+          comparison = a[sortField] - b[sortField];
+        }
+        return sortOrder === 'asc' ? comparison : -comparison;
+      }),
+    [datosBaseActivos, sortField, sortOrder],
+  );
 
   const handleToggleMunicipio = (nombre: string) => {
     setSelectedMunicipios((actuales) => {
@@ -202,6 +274,31 @@ export default function SaludPage() {
     });
   };
 
+  const mostrarSeleccionCompleta =
+    selectedMunicipios === null || selectedMunicipios.length === municipios.length;
+
+  const etiquetaSeleccion = useMemo(() => {
+    if (mostrarSeleccionCompleta) return 'Corrientes';
+    if (datosBaseActivos.length === 0) return 'Sin selección';
+    if (datosBaseActivos.length === 1) {
+      return datosBaseActivos[0].municipio || datosBaseActivos[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(
+      new Set(datosBaseActivos.map((m) => m.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = municipios.filter(
+        (m) => (m.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === datosBaseActivos.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${datosBaseActivos.length} municipios`;
+  }, [mostrarSeleccionCompleta, datosBaseActivos, municipios]);
+
   const handleSelectAll = () => setSelectedMunicipios(mostrarSeleccionCompleta ? [] : null);
 
   const handleSort = (field: SortField) => {
@@ -217,12 +314,12 @@ export default function SaludPage() {
     if (sortField !== field) {
       return <ArrowUpDown size={12} color="#94a3b8" style={{ marginLeft: 4, opacity: 0.5 }} />;
     }
-    return sortOrder === 'asc'
-      ? <ArrowUp size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />
-      : <ArrowDown size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />;
+    return sortOrder === 'asc' ? (
+      <ArrowUp size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />
+    ) : (
+      <ArrowDown size={12} color="#059669" strokeWidth={2.5} style={{ marginLeft: 4 }} />
+    );
   };
-
-  const mostrarSeleccionCompleta = selectedMunicipios === null || selectedMunicipios.length === municipios.length;
 
   return (
     <div className="container">
@@ -233,29 +330,43 @@ export default function SaludPage() {
         <div className="titleGroup">
           <h1>COBERTURA DE SALUD EN VIVIENDAS PARTICULARES</h1>
           <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-            Provincia de Corrientes — Censo 2022 por Municipios
+            Provincia de Corrientes — Censo 2022 por Municipios y Departamentos
           </p>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Población seleccionada</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Población Relevada
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? totalesSeleccion.poblacion.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {mostrarSeleccionCompleta ? 'Provincia de Corrientes' : 'Municipios seleccionados'}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {mostrarSeleccionCompleta ? 'Total Provincia de Corrientes' : 'Individuos en territorios seleccionados'}
           </span>
         </div>
 
         {INDICADORES.map((indicador) => (
-          <div key={indicador} className="card" style={{ padding: '14px 18px', borderLeft: `4px solid ${COLORES[indicador]}` }}>
-            <span className="metricLabel">{ETIQUETAS[indicador]}</span>
-            <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: COLORES[indicador] }}>
+          <div
+            key={indicador}
+            className="card"
+            style={{ padding: '14px 18px', borderLeft: `4px solid ${COLORES[indicador]}` }}
+          >
+            <div style={{ fontSize: '0.95rem', fontWeight: 800, color: COLORES[indicador], lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </div>
+            <span className="metricLabel" style={{ marginTop: 2 }}>
+              {ETIQUETAS[indicador]}
+            </span>
+            <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: COLORES[indicador] }}>
               {data ? formatPct(totalesSeleccion.porcentajes[indicador]) : '...'}
             </span>
-            <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Porcentaje de la población</span>
+            <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Porcentaje de la población</span>
           </div>
         ))}
       </div>
@@ -303,14 +414,28 @@ export default function SaludPage() {
           <div className="cardHeader">
             <div className="cardTitle">
               <HeartPulse className="w-4 h-4 text-emerald-400" />
-              <span>{ETIQUETAS[selectedIndicador]} por Municipio</span>
+              <span>
+                {ETIQUETAS[selectedIndicador]} por {viewMode === 'mapa' ? 'Departamento' : 'Municipio'}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
               <button
                 onClick={() => setViewMode('grafico')}
                 aria-pressed={viewMode === 'grafico'}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent', color: '#ffffff' }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'grafico' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
               >
                 <BarChart2 className="w-3.5 h-3.5" />
                 Gráfico
@@ -318,15 +443,47 @@ export default function SaludPage() {
               <button
                 onClick={() => setViewMode('tabla')}
                 aria-pressed={viewMode === 'tabla'}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 6, border: 'none', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent', color: '#ffffff' }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'tabla' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
               >
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
               </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                aria-pressed={viewMode === 'mapa'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
+              </button>
             </div>
           </div>
 
-          <div className="cardBody" style={{ minHeight: 520, padding: 14 }}>
+          <div className="cardBody" style={{ minHeight: 520, padding: 18 }}>
             {loading ? (
               <div style={{ display: 'flex', height: 450, alignItems: 'center', justifyContent: 'center', gap: 8, color: '#64748b' }}>
                 <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
@@ -334,60 +491,157 @@ export default function SaludPage() {
               </div>
             ) : viewMode === 'grafico' ? (
               datosGrafico.length > 0 ? (
-                <div style={{ maxHeight: 680, overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-                  <div style={{ minWidth: 560, height: Math.max(480, datosGrafico.length * 34), padding: '8px 8px 0 0' }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        layout="vertical"
-                        data={datosGrafico}
-                        margin={{ top: 20, right: 76, left: 16, bottom: 42 }}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderRadius: 8,
+                    border: '1px solid #e2e8f0',
+                    backgroundColor: '#ffffff',
+                  }}
+                >
+                  {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                  <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                    {/* Título fijo del Eje Y */}
+                    <div
+                      style={{
+                        width: 32,
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        borderRight: '1px solid #f1f5f9',
+                      }}
+                    >
+                      <span
+                        style={{
+                          writingMode: 'vertical-rl',
+                          transform: 'rotate(180deg)',
+                          color: '#64748b',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                        }}
                       >
-                        <XAxis
-                          type="number"
-                          domain={[0, 100]}
-                          tickFormatter={(value) => `${value}%`}
-                          stroke="#94a3b8"
-                          fontSize={11}
-                          label={{
-                            value: `${ETIQUETAS[selectedIndicador]} (%)`,
-                            position: 'insideBottom',
-                            offset: -20,
-                            fill: '#64748b',
-                            fontSize: 12,
-                            fontWeight: 600,
+                        Municipio
+                      </span>
+                    </div>
+
+                    {/* Lista scrolleable de barras */}
+                    <div
+                      style={{
+                        flex: 1,
+                        maxHeight: '500px',
+                        overflowY: 'scroll',
+                        overflowX: 'hidden',
+                      }}
+                    >
+                      <div style={{ width: '100%', height: chartHeight }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart
+                            layout="vertical"
+                            data={datosGrafico}
+                            margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                          >
+                            <XAxis type="number" domain={[0, 100]} hide />
+                            <YAxis
+                              type="category"
+                              dataKey="municipio_label"
+                              width={185}
+                              interval={0}
+                              stroke="#475569"
+                              fontSize={10.5}
+                              tickLine={false}
+                            />
+                            <Tooltip
+                              formatter={(value) => [formatPct(Number(value)), ETIQUETAS[selectedIndicador]]}
+                              labelFormatter={(label) => {
+                                const municipio = datosGrafico.find((row) => row.municipio_label === label);
+                                return municipio ? `${municipio.municipio} · ${municipio.departamento}` : label;
+                              }}
+                              contentStyle={{
+                                backgroundColor: '#0f172a',
+                                borderRadius: 8,
+                                border: '1px solid #334155',
+                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                                padding: '8px 12px',
+                              }}
+                              labelStyle={{
+                                color: '#ffffff',
+                                fontWeight: 600,
+                                marginBottom: 4,
+                                fontSize: '0.8rem',
+                              }}
+                              itemStyle={{
+                                color: '#34d399',
+                                fontWeight: 700,
+                                fontSize: '0.82rem',
+                              }}
+                            />
+                            <Bar
+                              dataKey={selectedIndicador}
+                              fill={COLORES[selectedIndicador]}
+                              radius={[0, 4, 4, 0]}
+                              barSize={18}
+                            >
+                              <LabelList
+                                dataKey={selectedIndicador}
+                                position="right"
+                                formatter={(value) => formatPct(Number(value))}
+                                fill="#14203b"
+                                fontSize={10}
+                                fontWeight={700}
+                              />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pie fijo del Eje X (32px eje Y + 6px margin + 185px YAxis = 223px izq, 65px + 17px scrollbar = 82px der) */}
+                  <div
+                    style={{
+                      borderTop: '1px solid #cbd5e1',
+                      backgroundColor: '#f8fafc',
+                      paddingTop: 6,
+                      paddingBottom: 10,
+                      paddingLeft: 223,
+                      paddingRight: 82,
+                      borderBottomLeftRadius: 8,
+                      borderBottomRightRadius: 8,
+                    }}
+                  >
+                    <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                      {[0, 25, 50, 75, 100].map((tick) => (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${tick}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
                           }}
-                        />
-                        <YAxis
-                          type="category"
-                          dataKey="municipio_label"
-                          width={178}
-                          stroke="#475569"
-                          fontSize={10}
-                          tickLine={false}
-                          tickMargin={8}
-                        />
-                        <Tooltip
-                          formatter={(value) => [formatPct(Number(value)), ETIQUETAS[selectedIndicador]]}
-                          labelFormatter={(label) => {
-                            const municipio = datosGrafico.find((row) => row.municipio_label === label);
-                            return municipio ? `${municipio.municipio} · ${municipio.departamento}` : label;
-                          }}
-                          contentStyle={{ backgroundColor: '#0f172a', borderRadius: 8, border: '1px solid #334155', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)', padding: '8px 12px' }}
-                          labelStyle={{ color: '#ffffff', fontWeight: 600, marginBottom: 4, fontSize: '0.8rem' }}
-                          itemStyle={{ color: COLORES[selectedIndicador], fontWeight: 700, fontSize: '0.82rem' }}
-                        />
-                        <Bar dataKey={selectedIndicador} fill={COLORES[selectedIndicador]} radius={[0, 4, 4, 0]}>
-                          <LabelList
-                            dataKey={selectedIndicador}
-                            position="right"
-                            formatter={(value) => formatPct(Number(value))}
-                            fill={COLORES[selectedIndicador]}
-                            fontSize={10}
-                            fontWeight={600}
-                          />
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{tick}%</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: '#475569',
+                        marginTop: 6,
+                      }}
+                    >
+                      {ETIQUETAS[selectedIndicador]} (%)
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -395,6 +649,14 @@ export default function SaludPage() {
                   No hay municipios seleccionados.
                 </div>
               )
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={ETIQUETAS[selectedIndicador]}
+                colorScheme={MAP_COLOR_SCHEMES[selectedIndicador]}
+                geoJsonUrl="/corrientes-departamentos.geojson"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div style={{ maxHeight: 600, overflow: 'auto', borderRadius: 8, border: '1px solid #e2e8f0' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
@@ -408,8 +670,21 @@ export default function SaludPage() {
                         ['programas_pct', 'Programas Estatales'],
                         ['sin_cobertura_pct', 'Sin Cobertura'],
                       ] as [SortField, string][]).map(([field, label]) => (
-                        <th key={field} onClick={() => handleSort(field)} style={{ padding: '10px 12px', textAlign: field === 'departamento' || field === 'municipio' ? 'left' : 'right', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>{label}{renderSortIcon(field)}</span>
+                        <th
+                          key={field}
+                          onClick={() => handleSort(field)}
+                          style={{
+                            padding: '10px 12px',
+                            textAlign: field === 'departamento' || field === 'municipio' ? 'left' : 'right',
+                            whiteSpace: 'nowrap',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                            {label}
+                            {renderSortIcon(field)}
+                          </span>
                         </th>
                       ))}
                     </tr>
@@ -483,7 +758,7 @@ export default function SaludPage() {
                   </label>
                   <div style={{ margin: '5px 0 8px 20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {grupo.municipios.map((municipio) => (
-                      <label key={municipio.municipio} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer' }}>
+                      <label key={municipioKey(municipio)} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.72rem', color: '#334155', cursor: 'pointer' }}>
                         <input
                           type="checkbox"
                           checked={selectedMunicipios === null || selectedMunicipios.includes(municipioKey(municipio))}

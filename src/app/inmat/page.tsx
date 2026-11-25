@@ -5,15 +5,17 @@ import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import { InfoTooltip } from '@/components/InfoTooltip';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
-import { 
-  Layers, 
-  ChevronLeft, 
-  BarChart2, 
-  Table as TableIcon, 
+import CorrientesMap from '@/components/CorrientesMap';
+import {
+  Layers,
+  ChevronLeft,
+  BarChart2,
+  Table as TableIcon,
+  Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown 
+  ArrowDown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -26,7 +28,7 @@ import {
 } from 'recharts';
 
 type CalidadInmat = 'calidad_1' | 'calidad_2' | 'calidad_3' | 'calidad_4';
-type SortField = 'departamento' | 'municipio' | 'total_viviendas' | 'valor_calidad' | 'pct_calidad';
+type SortField = 'departamento' | 'municipio' | 'total_viviendas' | CalidadInmat;
 type SortOrder = 'asc' | 'desc';
 
 type InmatTerritory = {
@@ -45,18 +47,40 @@ type InmatTerritory = {
   pct_calidad_4: string;
 };
 
-type VisibleInmatTerritory = InmatTerritory & { locationKey: string };
+type VisibleInmatTerritory = InmatTerritory & {
+  locationKey: string;
+  incidencia: number;
+};
+
+const CATEGORIAS_INMAT: { key: CalidadInmat; label: string; shortLabel: string }[] = [
+  { key: 'calidad_1', label: 'Calidad I (Materiales Satisfactorios)', shortLabel: 'Calidad I' },
+  { key: 'calidad_2', label: 'Calidad II (Aceptables / Reparables)', shortLabel: 'Calidad II' },
+  { key: 'calidad_3', label: 'Calidad III (Materiales Deficitarios)', shortLabel: 'Calidad III' },
+  { key: 'calidad_4', label: 'Calidad IV (Materiales Críticos / Precarios)', shortLabel: 'Calidad IV' },
+];
 
 const EMPTY_TERRITORIES: InmatTerritory[] = [];
+
+const normalizeText = (value: string) =>
+  (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const calcPctNumber = (valor: number, total: number) =>
+  total > 0 ? (valor / total) * 100 : 0;
+
+const formatPct = (pct: number) => `${pct.toFixed(1).replace('.', ',')} %`;
 
 export default function InmatPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedCalidad, setSelectedCalidad] = useState<CalidadInmat>('calidad_1');
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
-  const [sortField, setSortField] = useState<SortField>('valor_calidad');
+  const [sortField, setSortField] = useState<SortField>('total_viviendas');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
@@ -79,7 +103,8 @@ export default function InmatPage() {
   const detalleFiltrado = useMemo(
     () =>
       detalleOriginal.filter(
-        (territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
+        (territory) =>
+          selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
       ),
     [detalleOriginal, selectedLocations],
   );
@@ -92,10 +117,10 @@ export default function InmatPage() {
   };
 
   const labelsCortos: Record<CalidadInmat, string> = {
-    calidad_1: 'Calidad 1',
-    calidad_2: 'Calidad 2',
-    calidad_3: 'Calidad 3',
-    calidad_4: 'Calidad 4',
+    calidad_1: 'Calidad I',
+    calidad_2: 'Calidad II',
+    calidad_3: 'Calidad III',
+    calidad_4: 'Calidad IV',
   };
 
   const descripcionesInmat: Record<CalidadInmat, string> = {
@@ -110,17 +135,51 @@ export default function InmatPage() {
   };
 
   const territoriosVisibles = useMemo<VisibleInmatTerritory[]>(() => {
-    return detalleFiltrado.map((territory) => ({
-      ...territory,
-      municipio: territory.municipio || territory.nombre || territory.departamento,
-      locationKey: territoryKey(territory),
-    }));
-  }, [detalleFiltrado]);
+    return detalleFiltrado.map((territory) => {
+      const total = Number(territory.total_viviendas) || 0;
+      const val = Number(territory[selectedCalidad]) || 0;
+      return {
+        ...territory,
+        municipio: territory.municipio || territory.nombre || territory.departamento,
+        locationKey: territoryKey(territory),
+        incidencia: calcPctNumber(val, total),
+      };
+    });
+  }, [detalleFiltrado, selectedCalidad]);
 
   // Cálculos dinámicos conectados al botón de Calidad y al filtro territorial
-  const totalSeleccionado = detalleFiltrado.reduce((acc, t) => acc + t.total_viviendas, 0);
-  const hogaresCalidadSeleccionada = detalleFiltrado.reduce((acc, t) => acc + (t[selectedCalidad] || 0), 0);
-  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+  const totalSeleccionado = detalleFiltrado.reduce(
+    (acc, t) => acc + (Number(t.total_viviendas) || 0),
+    0,
+  );
+  const hogaresCalidadSeleccionada = detalleFiltrado.reduce(
+    (acc, t) => acc + (Number(t[selectedCalidad]) || 0),
+    0,
+  );
+  const seleccionCompleta =
+    selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (detalleFiltrado.length === 0) return 'Sin selección';
+    if (detalleFiltrado.length === 1) {
+      return detalleFiltrado[0].municipio || detalleFiltrado[0].nombre || detalleFiltrado[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(
+      new Set(detalleFiltrado.map((t) => t.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = detalleOriginal.filter(
+        (t) => (t.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === detalleFiltrado.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${detalleFiltrado.length} municipios`;
+  }, [seleccionCompleta, detalleFiltrado, detalleOriginal]);
 
   const pctCalidadProvincia =
     totalSeleccionado > 0
@@ -130,11 +189,116 @@ export default function InmatPage() {
   const pctCalidadPais = data?.kpis?.pais?.[selectedCalidad] || '—';
   const pctCalidadNea = data?.kpis?.nea?.[selectedCalidad] || '—';
 
+  // Todos los municipios ordenados de mayor a menor por % de incidencia
   const datosGrafico = useMemo(() => {
-    return [...territoriosVisibles]
-      .sort((a, b) => (Number(b[selectedCalidad]) || 0) - (Number(a[selectedCalidad]) || 0))
-      .slice(0, 25);
-  }, [territoriosVisibles, selectedCalidad]);
+    return [...territoriosVisibles].sort((a, b) => b.incidencia - a.incidencia);
+  }, [territoriosVisibles]);
+
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  // Escala porcentual dinámica para que tanto Calidad I (~80%) como Calidad IV (~15%) aprovechen todo el ancho
+  const { xMax, xTicks } = useMemo(() => {
+    const maxVal = datosGrafico.reduce(
+      (max, item) => Math.max(max, Number(item.incidencia) || 0),
+      0,
+    );
+    if (maxVal === 0) return { xMax: 100, xTicks: [0, 25, 50, 75, 100] };
+
+    const targetMax = Math.min(100, maxVal * 1.15);
+    const rawStep = targetMax / 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 : 10;
+
+    const niceStep = niceFraction * magnitude;
+    const top = Math.min(100, niceStep * 4);
+    const step = top / 4;
+
+    return {
+      xMax: top,
+      xTicks: [0, step, step * 2, step * 3, top],
+    };
+  }, [datosGrafico]);
+
+  // Datos consolidados por departamento para el Mapa
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(detalleFiltrado.map((t) => t.departamento));
+    const deptosMap = new Map<string, { total: number; compVal: number }>();
+
+    for (const t of detalleOriginal) {
+      const curr = deptosMap.get(t.departamento) || { total: 0, compVal: 0 };
+      curr.total += Number(t.total_viviendas) || 0;
+      curr.compVal += Number(t[selectedCalidad]) || 0;
+      deptosMap.set(t.departamento, curr);
+    }
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => {
+      const pct = vals.total > 0 ? (vals.compVal / vals.total) * 100 : 0;
+      return {
+        territoryName: depto,
+        value: pct,
+        labelFormatted: `${pct.toFixed(1).replace('.', ',')} %`,
+        subtitle: `${vals.compVal.toLocaleString('es-AR')} de ${vals.total.toLocaleString('es-AR')} viviendas`,
+        isSelected: deptosActivos.has(depto),
+      };
+    });
+  }, [detalleOriginal, detalleFiltrado, selectedCalidad]);
+
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const target = normalizeText(deptoName);
+    const keysDelDepto = detalleOriginal
+      .filter((t) => normalizeText(t.departamento) === target)
+      .map(territoryKey);
+
+    if (!keysDelDepto.length) return;
+
+    setSelectedLocations((prev) => {
+      const current = prev ?? detalleOriginal.map(territoryKey);
+      const soloEsteDeptoSeleccionado =
+        current.length === keysDelDepto.length &&
+        keysDelDepto.every((k) => current.includes(k));
+
+      return soloEsteDeptoSeleccionado ? null : keysDelDepto;
+    });
+  };
+
+  // Totales de las 4 calidades para el pie fijo de la tabla
+  const totalesTabla = useMemo(() => {
+    const viviendas = territoriosVisibles.reduce(
+      (acc, r) => acc + (Number(r.total_viviendas) || 0),
+      0,
+    );
+    const sum = (key: CalidadInmat) =>
+      territoriosVisibles.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+    const pct = (v: number) =>
+      viviendas > 0 ? ((v / viviendas) * 100).toFixed(1).replace('.', ',') : '0,0';
+
+    const c1 = sum('calidad_1');
+    const c2 = sum('calidad_2');
+    const c3 = sum('calidad_3');
+    const c4 = sum('calidad_4');
+
+    return {
+      viviendas,
+      c1,
+      c2,
+      c3,
+      c4,
+      pctC1: pct(c1),
+      pctC2: pct(c2),
+      pctC3: pct(c3),
+      pctC4: pct(c4),
+    };
+  }, [territoriosVisibles]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -173,22 +337,17 @@ export default function InmatPage() {
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      const aVal =
-        sortField === 'total_viviendas'
-          ? a.total_viviendas
-          : sortField === 'valor_calidad'
-          ? a[selectedCalidad]
-          : Number(a[`pct_${selectedCalidad}`]);
-      const bVal =
-        sortField === 'total_viviendas'
-          ? b.total_viviendas
-          : sortField === 'valor_calidad'
-          ? b[selectedCalidad]
-          : Number(b[`pct_${selectedCalidad}`]);
+      if (sortField === 'total_viviendas') {
+        const aVal = Number(a.total_viviendas) || 0;
+        const bVal = Number(b.total_viviendas) || 0;
+        return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+      }
 
+      const aVal = calcPctNumber(Number(a[sortField]) || 0, Number(a.total_viviendas) || 0);
+      const bVal = calcPctNumber(Number(b[sortField]) || 0, Number(b.total_viviendas) || 0);
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [territoriosVisibles, sortField, sortOrder, selectedCalidad]);
+  }, [territoriosVisibles, sortField, sortOrder]);
 
   const getColorCalidad = (cal: CalidadInmat) => {
     switch (cal) {
@@ -200,6 +359,19 @@ export default function InmatPage() {
         return '#d97706';
       case 'calidad_4':
         return '#dc2626';
+    }
+  };
+
+  const getMapColorScheme = (cal: CalidadInmat): 'emerald' | 'blue' | 'amber' | 'red' => {
+    switch (cal) {
+      case 'calidad_1':
+        return 'emerald';
+      case 'calidad_2':
+        return 'blue';
+      case 'calidad_3':
+        return 'amber';
+      case 'calidad_4':
+        return 'red';
     }
   };
 
@@ -221,51 +393,71 @@ export default function InmatPage() {
       {/* Tarjetas KPI: Total Viviendas | Provincia/Selección | Total País | Región NEA */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            {seleccionCompleta ? 'Total Viviendas Relevadas' : 'Viviendas seleccionadas'}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text="Total de viviendas particulares censadas en la jurisdicción analizada." />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Total Viviendas Relevadas
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincia de Corrientes' : 'Viviendas en territorios seleccionados'}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #10b981', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsCortos[selectedCalidad]} ({seleccionCompleta ? 'Provincia' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text={descripcionesInmat[selectedCalidad]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsCortos[selectedCalidad]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {data ? pctCalidadProvincia : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {data ? `${hogaresCalidadSeleccionada.toLocaleString('es-AR')} viviendas (${seleccionCompleta ? 'Corrientes' : 'Selección'})` : ''}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {data ? `${hogaresCalidadSeleccionada.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #3b82f6', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsCortos[selectedCalidad]} (Total País)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+              Total País
+            </span>
             <InfoTooltip text={descripcionesInmat[selectedCalidad]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsCortos[selectedCalidad]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {pctCalidadPais}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>República Argentina</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsCortos[selectedCalidad]} (Región NEA)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b45309', lineHeight: 1.2 }}>
+              Región NEA
+            </span>
             <InfoTooltip text={descripcionesInmat[selectedCalidad]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsCortos[selectedCalidad]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b45309' }}>
             {pctCalidadNea}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Nordeste Argentino</span>
         </div>
       </div>
 
@@ -288,34 +480,44 @@ export default function InmatPage() {
           <InfoTooltip text={descripcionesInmat[selectedCalidad]} />
           <span style={{ marginLeft: 4 }}>:</span>
         </span>
-        {(['calidad_1', 'calidad_2', 'calidad_3', 'calidad_4'] as CalidadInmat[]).map((cal) => (
+        {CATEGORIAS_INMAT.map((cat) => (
           <button
-            key={cal}
-            onClick={() => setSelectedCalidad(cal)}
+            key={cat.key}
+            onClick={() => {
+              setSelectedCalidad(cat.key);
+              if (viewMode === 'tabla') {
+                setSortField(cat.key);
+                setSortOrder('desc');
+              }
+            }}
             style={{
               border: '1px solid',
-              borderColor: selectedCalidad === cal ? '#10b981' : '#cbd5e1',
-              backgroundColor: selectedCalidad === cal ? '#14203b' : '#f8fafc',
-              color: selectedCalidad === cal ? '#ffffff' : '#334155',
+              borderColor: selectedCalidad === cat.key ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedCalidad === cat.key ? '#14203b' : '#f8fafc',
+              color: selectedCalidad === cat.key ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
               fontSize: '0.82rem',
-              fontWeight: selectedCalidad === cal ? 700 : 500,
+              fontWeight: selectedCalidad === cat.key ? 700 : 500,
               cursor: 'pointer',
             }}
           >
-            {labelsInmat[cal].split(' (')[0]}
+            {cat.shortLabel}
           </button>
         ))}
       </div>
 
-      {/* Gráfico / Tabla + Filtro Lateral */}
+      {/* Gráfico / Tabla / Mapa + Filtro Lateral */}
       <div className="population-layout">
         <div className="card" style={{ margin: 0 }}>
           <div className="cardHeader">
             <div className="cardTitle">
               <Layers className="w-4 h-4 text-emerald-400" />
-              <span>Distribución de {labelsInmat[selectedCalidad]} por municipio</span>
+              <span>
+                {viewMode === 'tabla'
+                  ? 'Distribución completa de viviendas por calidad INMAT y municipio'
+                  : `Incidencia de ${labelsInmat[selectedCalidad]} (%) por ${viewMode === 'mapa' ? 'departamento' : 'municipio'}`}
+              </span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -357,6 +559,25 @@ export default function InmatPage() {
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
               </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
+              </button>
             </div>
           </div>
 
@@ -367,84 +588,176 @@ export default function InmatPage() {
                 <span>Calculando materiales de vivienda...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 600 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: 'Cantidad de Viviendas Particulares',
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="municipio"
-                      width={175}
-                      stroke="#475569"
-                      fontSize={11}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(val: any) => [
-                        `${Number(val).toLocaleString('es-AR')} viviendas`,
-                        labelsInmat[selectedCalidad],
-                      ]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar
-                      dataKey={selectedCalidad}
-                      fill={getColorCalidad(selectedCalidad)}
-                      radius={[0, 4, 4, 0]}
                     >
-                      <LabelList
-                        dataKey={selectedCalidad}
-                        position="right"
-                        formatter={(val: any) => Number(val).toLocaleString('es-AR')}
-                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, xMax]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="municipio"
+                            width={185}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={10.5}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(val: any, _name: any, props: any) => {
+                              const viviendas = Number(props?.payload?.[selectedCalidad]) || 0;
+                              return [
+                                `${formatPct(Number(val))} (${viviendas.toLocaleString('es-AR')} viviendas)`,
+                                labelsInmat[selectedCalidad],
+                              ];
+                            }}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar
+                            dataKey="incidencia"
+                            fill={getColorCalidad(selectedCalidad)}
+                            radius={[0, 4, 4, 0]}
+                            barSize={18}
+                          >
+                            <LabelList
+                              dataKey="incidencia"
+                              position="right"
+                              formatter={(val: any) => formatPct(Number(val))}
+                              style={{ fill: '#334155', fontSize: 10.5, fontWeight: 600 }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X (32px eje Y + 6px margin + 185px YAxis = 223px izq, 65px + 17px scrollbar = 82px der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 223,
+                    paddingRight: 82,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {xTicks.map((tick) => {
+                      const pct = xMax > 0 ? (tick / xMax) * 100 : 0;
+                      const label =
+                        xMax <= 15
+                          ? `${Number(tick).toFixed(1).replace('.', ',')}%`
+                          : `${Math.round(tick)}%`;
+                      return (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${pct}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    Porcentaje de viviendas con {labelsInmat[selectedCalidad]} (%)
+                  </div>
+                </div>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel={`% ${labelsCortos[selectedCalidad]}`}
+                colorScheme={getMapColorScheme(selectedCalidad)}
+                geoJsonUrl="/corrientes-departamentos.geojson"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />
             ) : (
               <div
                 style={{
@@ -455,7 +768,7 @@ export default function InmatPage() {
                   border: '1px solid #e2e8f0',
                 }}
               >
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <table style={{ width: '100%', minWidth: 920, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                   <thead
                     style={{
                       position: 'sticky',
@@ -466,7 +779,7 @@ export default function InmatPage() {
                     }}
                   >
                     <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                      <th 
+                      <th
                         onClick={() => handleSort('departamento')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -475,7 +788,7 @@ export default function InmatPage() {
                           {renderSortIcon('departamento')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('municipio')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -484,7 +797,7 @@ export default function InmatPage() {
                           {renderSortIcon('municipio')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('total_viviendas')}
                         style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -493,47 +806,100 @@ export default function InmatPage() {
                           {renderSortIcon('total_viviendas')}
                         </div>
                       </th>
-                      <th 
-                        onClick={() => handleSort('valor_calidad')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>{labelsInmat[selectedCalidad].split(' (')[0]}</span>
-                          {renderSortIcon('valor_calidad')}
-                        </div>
-                      </th>
-                      <th 
-                        onClick={() => handleSort('pct_calidad')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>% Incidencia</span>
-                          {renderSortIcon('pct_calidad')}
-                        </div>
-                      </th>
+                      {CATEGORIAS_INMAT.map((cat) => (
+                        <th
+                          key={cat.key}
+                          onClick={() => handleSort(cat.key)}
+                          style={{
+                            padding: '10px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedCalidad === cat.key ? '#f0fdf4' : '#ffffff',
+                            color: selectedCalidad === cat.key ? getColorCalidad(cat.key) : '#475569',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                            <span>{cat.shortLabel}</span>
+                            {renderSortIcon(cat.key)}
+                          </div>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {detalleTablaOrdenado.map((row, idx: number) => (
-                      <tr
-                        key={row.locationKey || idx}
-                        style={{
-                          borderBottom: '1px solid #f1f5f9',
-                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
-                        }}
-                      >
-                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
-                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: getColorCalidad(selectedCalidad) }}>
-                          {row[selectedCalidad].toLocaleString('es-AR')}
-                        </td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
-                          {row[`pct_${selectedCalidad}`]} %
-                        </td>
-                      </tr>
-                    ))}
+                    {detalleTablaOrdenado.map((row, idx: number) => {
+                      const total = Number(row.total_viviendas) || 0;
+                      return (
+                        <tr
+                          key={row.locationKey || idx}
+                          style={{
+                            borderBottom: '1px solid #f1f5f9',
+                            backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                          }}
+                        >
+                          <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: '#14203b' }}>{row.municipio}</td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#14203b' }}>
+                            {total.toLocaleString('es-AR')}
+                          </td>
+                          {CATEGORIAS_INMAT.map((cat) => {
+                            const count = Number(row[cat.key]) || 0;
+                            const pct = calcPctNumber(count, total);
+                            return (
+                              <td
+                                key={cat.key}
+                                style={{
+                                  padding: '8px 12px',
+                                  textAlign: 'right',
+                                  backgroundColor:
+                                    selectedCalidad === cat.key ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
+                                }}
+                              >
+                                <span style={{ fontWeight: 700, color: getColorCalidad(cat.key) }}>
+                                  {formatPct(pct)}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                                  ({count.toLocaleString('es-AR')})
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  <tfoot>
+                    <tr
+                      style={{
+                        position: 'sticky',
+                        bottom: 0,
+                        backgroundColor: '#eaf2f8',
+                        color: '#14203b',
+                        fontWeight: 800,
+                        borderTop: '2px solid #cbd5e1',
+                      }}
+                    >
+                      <td colSpan={2} style={{ padding: '10px 12px' }}>
+                        Total seleccionado
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.viviendas.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctC1} % ({totalesTabla.c1.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctC2} % ({totalesTabla.c2.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctC3} % ({totalesTabla.c3.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctC4} % ({totalesTabla.c4.toLocaleString('es-AR')})
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}

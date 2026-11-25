@@ -8,12 +8,14 @@ import {
   ChevronLeft, 
   BarChart2, 
   Table as TableIcon, 
+  Map as MapIcon,
   Loader2,
   Search,
   ArrowUpDown,
   ArrowUp,
   ArrowDown
 } from 'lucide-react';
+import CorrientesMap from '@/components/CorrientesMap';
 import {
   ResponsiveContainer,
   BarChart,
@@ -52,7 +54,7 @@ const normalizeText = (value: string) => value
 export default function PoblacionPage() {
   const [data, setData] = useState<PoblacionData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'grafico' | 'tabla'>('grafico');
+  const [viewMode, setViewMode] = useState<'grafico' | 'tabla' | 'mapa'>('grafico');
 
   // Filtros de búsqueda y selección de municipios (arranca con todos seleccionados)
   const [searchTerm, setSearchTerm] = useState('');
@@ -154,13 +156,115 @@ export default function PoblacionPage() {
       provinciaCompleta: selectedMunicipios.length === municipiosData.length && municipiosData.length > 0,
     };
   }, [data?.totalPoblacion, datosBaseActivos, municipiosData.length, selectedMunicipios.length]);
+  
+  const etiquetaSeleccion = useMemo(() => {
+    if (totalesSeleccion.provinciaCompleta) return 'Corrientes';
+    if (datosBaseActivos.length === 0) return 'Sin selección';
+    if (datosBaseActivos.length === 1) {
+      return datosBaseActivos[0].municipio || datosBaseActivos[0].departamento;
+    }
 
-  // Datos fijos para el gráfico: preserva orden de mayor a menor según censo 2022
+    const deptosUnicos = Array.from(
+      new Set(datosBaseActivos.map((m) => m.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = municipiosData.filter(
+        (m) => (m.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === datosBaseActivos.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${datosBaseActivos.length} municipios`;
+  }, [totalesSeleccion.provinciaCompleta, datosBaseActivos, municipiosData]);
+
+  // Datos para el gráfico: todos los municipios seleccionados ordenados de mayor a menor según censo 2022
   const datosGrafico = useMemo(() => {
-    return [...datosBaseActivos]
-      .sort((a, b) => b.pop_2022 - a.pop_2022)
-      .slice(0, 25);
+    return [...datosBaseActivos].sort((a, b) => b.pop_2022 - a.pop_2022);
   }, [datosBaseActivos]);
+
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  const { xMax, xTicks } = useMemo(() => {
+    const maxVal = datosGrafico.reduce((max, item) => Math.max(max, Number(item.pop_2022) || 0), 0);
+    if (maxVal === 0) return { xMax: 100, xTicks: [0, 25, 50, 75, 100] };
+
+    // Dejamos un 12% de aire para que entre la etiqueta numérica al final de la barra más larga
+    const targetMax = maxVal * 1.12;
+    const rawStep = targetMax / 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 :
+      normalized <= 6 ? 6 :
+      normalized <= 8 ? 8 : 10;
+
+    const niceStep = niceFraction * magnitude;
+    const top = niceStep * 4;
+
+    return {
+      xMax: top,
+      xTicks: [0, niceStep, niceStep * 2, niceStep * 3, top],
+    };
+  }, [datosGrafico]);
+
+  // Datos consolidados por departamento para el Mapa
+  const datosMapa = useMemo(() => {
+    const deptosActivos = new Set(datosBaseActivos.map((m) => m.departamento || 'Sin departamento'));
+    const deptosMap = new Map<string, { pob: number; hogares: number }>();
+
+    for (const m of municipiosData) {
+      const depto = m.departamento || 'Sin departamento';
+      const curr = deptosMap.get(depto) || { pob: 0, hogares: 0 };
+      curr.pob += Number(m.pop_2022) || 0;
+      curr.hogares += Number(m.total_hogares) || 0;
+      deptosMap.set(depto, curr);
+    }
+
+    return Array.from(deptosMap.entries()).map(([depto, vals]) => ({
+      territoryName: depto,
+      value: vals.pob,
+      labelFormatted: `${vals.pob.toLocaleString('es-AR')}\u00A0hab.`,
+      subtitle: `Hogares: ${vals.hogares.toLocaleString('es-AR')}`,
+      isSelected: deptosActivos.has(depto),
+    }));
+  }, [municipiosData, datosBaseActivos]);
+
+  // Permite hacer clic en un departamento del mapa para aislarlo o restaurar todos en el filtro lateral
+  const handleSelectTerritoryOnMap = (deptoName: string) => {
+    const norm = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim();
+    const target = norm(deptoName);
+
+    const munisDelDepto = municipiosData
+      .filter((m) => norm(m.departamento || '') === target)
+      .map((m) => m.municipio);
+
+    if (!munisDelDepto.length) return;
+
+    setSelectedMunicipios((prev) => {
+      const soloEsteDeptoSeleccionado =
+        prev.length === munisDelDepto.length &&
+        munisDelDepto.every((m) => prev.includes(m));
+
+      return soloEsteDeptoSeleccionado
+        ? municipiosData.map((m) => m.municipio)
+        : munisDelDepto;
+    });
+  };
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -228,38 +332,53 @@ export default function PoblacionPage() {
       </div>
 
       {/* Tarjetas KPI Superiores dinámicas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">
-            {totalesSeleccion.provinciaCompleta ? 'Total Provincia de Corrientes' : 'Población seleccionada'}
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Población en Viviendas Particulares
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? totalesSeleccion.poblacion.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {totalesSeleccion.provinciaCompleta ? 'Individuos' : 'Individuos en municipios seleccionados'}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {totalesSeleccion.provinciaCompleta
+              ? 'Total Provincia de Corrientes'
+              : 'Individuos en territorios seleccionados'}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Peso Relativo sobre la Provincia</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Peso Relativo sobre la Provincia
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {totalesSeleccion.pesoRelativo.toFixed(1).replace('.', ',')} %
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Participación en total provincial</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Participación en total provincial</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Promedio Personas por Hogar</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Promedio Personas por Hogar
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {data ? totalesSeleccion.personasPorHogar.toFixed(2).replace('.', ',') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {totalesSeleccion.provinciaCompleta ? 'Provincia de Corrientes' : `${totalesSeleccion.hogares.toLocaleString('es-AR')} hogares seleccionados`}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {data ? `${totalesSeleccion.hogares.toLocaleString('es-AR')} hogares relevados` : ''}
           </span>
         </div>
       </div>
-
+      
       {/* Disposición con Sidebar Lateral de Filtro de Municipios */}
       <div className="population-layout">
         {/* Contenedor Principal (Gráfico o Tabla) */}
@@ -267,7 +386,7 @@ export default function PoblacionPage() {
           <div className="cardHeader">
             <div className="cardTitle">
               <Users className="w-4 h-4 text-emerald-400" />
-              <span>Distribución por Municipio</span>
+              <span>Distribución por {viewMode === 'mapa' ? 'Departamento' : 'Municipio'}</span>
             </div>
 
             <div style={{ display: 'flex', gap: 4, background: 'rgba(255,255,255,0.08)', padding: 3, borderRadius: 8 }}>
@@ -309,6 +428,25 @@ export default function PoblacionPage() {
                 <TableIcon className="w-3.5 h-3.5" />
                 Tabla
               </button>
+              <button
+                onClick={() => setViewMode('mapa')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: viewMode === 'mapa' ? '#10b981' : 'transparent',
+                  color: '#ffffff',
+                }}
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                Mapa
+              </button>
             </div>
           </div>
 
@@ -319,81 +457,166 @@ export default function PoblacionPage() {
                 <span>Calculando población por municipio...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 600 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 95, left: 20, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: 'Población en Viviendas Particulares (Censo 2022)',
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="municipio"
-                      width={140}
-                      stroke="#475569"
-                      fontSize={11}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(val) => [
-                        `${Number(val).toLocaleString('es-AR')} habitantes`,
-                        'Población 2022',
-                      ]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar dataKey="pop_2022" fill="#047857" radius={[0, 4, 4, 0]}>
-                      <LabelList
-                        dataKey="pop_2022"
-                        position="right"
-                        formatter={(value) => Number(value).toLocaleString('es-AR')}
-                        fill="#334155"
-                        fontSize={10}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                    >
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 95, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, xMax]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="municipio"
+                            width={175}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={11}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(val) => [
+                              `${Number(val).toLocaleString('es-AR')} habitantes`,
+                              'Población 2022',
+                            ]}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar dataKey="pop_2022" fill="#047857" radius={[0, 4, 4, 0]} barSize={18}>
+                            <LabelList
+                              dataKey="pop_2022"
+                              position="right"
+                              formatter={(value) => Number(value).toLocaleString('es-AR')}
+                              fill="#334155"
+                              fontSize={10}
+                              fontWeight={600}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X con los mismos offsets exactos (32px eje Y + 6px margin + 175px YAxis = 213px a la izq, y 95px + 17px scrollbar = 112px a la der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 213,
+                    paddingRight: 112,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {xTicks.map((tick) => {
+                      const pct = xMax > 0 ? (tick / xMax) * 100 : 0;
+                      return (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${pct}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {tick.toLocaleString('es-AR')}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    Población en Viviendas Particulares (Censo 2022)
+                  </div>
+                </div>
               </div>
+            ) : viewMode === 'mapa' ? (
+              <CorrientesMap
+                data={datosMapa}
+                metricLabel="Población 2022"
+                colorScheme="emerald"
+                geoJsonUrl="/corrientes-departamentos.geojson"
+                onSelectTerritory={handleSelectTerritoryOnMap}
+              />            
             ) : (
               <div
                 style={{

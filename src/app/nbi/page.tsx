@@ -6,16 +6,16 @@ import Link from 'next/link';
 import { InfoTooltip } from '@/components/InfoTooltip';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import CorrientesMap from '@/components/CorrientesMap';
-import { 
-  AlertTriangle, 
-  ChevronLeft, 
-  BarChart2, 
-  Table as TableIcon, 
+import {
+  AlertTriangle,
+  ChevronLeft,
+  BarChart2,
+  Table as TableIcon,
   Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -35,7 +35,7 @@ type ComponenteNBI =
   | 'escolaridad'
   | 'capacidad_subsistencia';
 
-type SortField = 'departamento' | 'municipio' | 'total_viviendas' | 'valor_nbi' | 'pct_nbi';
+type SortField = 'departamento' | 'municipio' | 'total_viviendas' | ComponenteNBI;
 type SortOrder = 'asc' | 'desc';
 
 type NbiTerritory = {
@@ -58,7 +58,10 @@ type NbiTerritory = {
   pct_capacidad_subsistencia: string;
 };
 
-type VisibleNbiTerritory = NbiTerritory & { locationKey: string };
+type VisibleNbiTerritory = NbiTerritory & {
+  locationKey: string;
+  incidencia: number;
+};
 
 type NbiData = {
   totalHogares: number;
@@ -70,7 +73,28 @@ type NbiData = {
   detalle: NbiTerritory[];
 };
 
+const COMPONENTES_NBI: { key: ComponenteNBI; label: string; shortLabel: string }[] = [
+  { key: 'si_nbi', label: 'Hogares con NBI (Total)', shortLabel: 'Con NBI (Total)' },
+  { key: 'hacinamiento', label: 'Hacinamiento Crítico', shortLabel: 'Hacinamiento' },
+  { key: 'viv_inconveniente', label: 'Vivienda Inconveniente', shortLabel: 'Viv. Inconveniente' },
+  { key: 'cond_sanitarias', label: 'Condiciones Sanitarias', shortLabel: 'Cond. Sanitarias' },
+  { key: 'escolaridad', label: 'NBI Escolaridad', shortLabel: 'Escolaridad' },
+  { key: 'capacidad_subsistencia', label: 'Capacidad de Subsistencia', shortLabel: 'Cap. Subsistencia' },
+];
+
 const EMPTY_TERRITORIES: NbiTerritory[] = [];
+
+const normalizeText = (value: string) =>
+  (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const calcPctNumber = (valor: number, total: number) =>
+  total > 0 ? (valor / total) * 100 : 0;
+
+const formatPct = (pct: number) => `${pct.toFixed(1).replace('.', ',')} %`;
 
 export default function NBIPage() {
   const [data, setData] = useState<NbiData | null>(null);
@@ -80,7 +104,7 @@ export default function NBIPage() {
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
-  const [sortField, setSortField] = useState<SortField>('valor_nbi');
+  const [sortField, setSortField] = useState<SortField>('total_viviendas');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
@@ -103,7 +127,8 @@ export default function NBIPage() {
   const detalleFiltrado = useMemo(
     () =>
       detalleOriginal.filter(
-        (territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
+        (territory) =>
+          selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
       ),
     [detalleOriginal, selectedLocations],
   );
@@ -130,12 +155,17 @@ export default function NBIPage() {
   };
 
   const territoriosVisibles = useMemo<VisibleNbiTerritory[]>(() => {
-    return detalleFiltrado.map((territory) => ({
-      ...territory,
-      municipio: territory.municipio || territory.nombre || territory.departamento,
-      locationKey: territoryKey(territory),
-    }));
-  }, [detalleFiltrado]);
+    return detalleFiltrado.map((territory) => {
+      const total = Number(territory.total_viviendas) || 0;
+      const val = Number(territory[selectedComp]) || 0;
+      return {
+        ...territory,
+        municipio: territory.municipio || territory.nombre || territory.departamento,
+        locationKey: territoryKey(territory),
+        incidencia: calcPctNumber(val, total),
+      };
+    });
+  }, [detalleFiltrado, selectedComp]);
 
   // Datos consolidados por departamento para el Mapa (% de incidencia del componente NBI activo)
   const datosMapa = useMemo(() => {
@@ -163,16 +193,9 @@ export default function NBIPage() {
 
   // Clic en un departamento del mapa para filtrar o restaurar todos
   const handleSelectTerritoryOnMap = (deptoName: string) => {
-    const norm = (s: string) =>
-      (s || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim();
-    const target = norm(deptoName);
-
+    const target = normalizeText(deptoName);
     const keysDelDepto = detalleOriginal
-      .filter((t) => norm(t.departamento) === target)
+      .filter((t) => normalizeText(t.departamento) === target)
       .map(territoryKey);
 
     if (!keysDelDepto.length) return;
@@ -188,9 +211,38 @@ export default function NBIPage() {
   };
 
   // Cálculos dinámicos de las tarjetas KPI superiores según selección territorial y componente
-  const totalSeleccionado = detalleFiltrado.reduce((acc, t) => acc + t.total_viviendas, 0);
-  const hogaresCompSeleccionado = detalleFiltrado.reduce((acc, t) => acc + (t[selectedComp] || 0), 0);
-  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+  const totalSeleccionado = detalleFiltrado.reduce(
+    (acc, t) => acc + (Number(t.total_viviendas) || 0),
+    0,
+  );
+  const hogaresCompSeleccionado = detalleFiltrado.reduce(
+    (acc, t) => acc + (Number(t[selectedComp]) || 0),
+    0,
+  );
+  const seleccionCompleta =
+    selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (detalleFiltrado.length === 0) return 'Sin selección';
+    if (detalleFiltrado.length === 1) {
+      return detalleFiltrado[0].municipio || detalleFiltrado[0].nombre || detalleFiltrado[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(
+      new Set(detalleFiltrado.map((t) => t.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = detalleOriginal.filter(
+        (t) => (t.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === detalleFiltrado.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${detalleFiltrado.length} municipios`;
+  }, [seleccionCompleta, detalleFiltrado, detalleOriginal]);
 
   const pctCompProvincia =
     totalSeleccionado > 0
@@ -200,12 +252,76 @@ export default function NBIPage() {
   const pctCompPais = data?.kpis?.pais?.[selectedComp] || '—';
   const pctCompNea = data?.kpis?.nea?.[selectedComp] || '—';
 
-  // Datos fijos para el gráfico
+  // Todos los municipios ordenados de mayor a menor por % de incidencia
   const datosGrafico = useMemo(() => {
-    return [...territoriosVisibles]
-      .sort((a, b) => (Number(b[selectedComp]) || 0) - (Number(a[selectedComp]) || 0))
-      .slice(0, 25);
-  }, [territoriosVisibles, selectedComp]);
+    return [...territoriosVisibles].sort((a, b) => b.incidencia - a.incidencia);
+  }, [territoriosVisibles]);
+
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  // Escala porcentual dinámica para que tanto NBI Total (~50%) como Escolaridad (~5%) ocupen bien el ancho
+  const { xMax, xTicks } = useMemo(() => {
+    const maxVal = datosGrafico.reduce(
+      (max, item) => Math.max(max, Number(item.incidencia) || 0),
+      0,
+    );
+    if (maxVal === 0) return { xMax: 100, xTicks: [0, 25, 50, 75, 100] };
+
+    const targetMax = Math.min(100, maxVal * 1.15);
+    const rawStep = targetMax / 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 : 10;
+
+    const niceStep = niceFraction * magnitude;
+    const top = Math.min(100, niceStep * 4);
+    const step = top / 4;
+
+    return {
+      xMax: top,
+      xTicks: [0, step, step * 2, step * 3, top],
+    };
+  }, [datosGrafico]);
+
+  // Totales de los 6 componentes para el pie fijo de la tabla
+  const totalesTabla = useMemo(() => {
+    const hogares = territoriosVisibles.reduce((acc, r) => acc + (Number(r.total_viviendas) || 0), 0);
+    const sum = (key: ComponenteNBI) =>
+      territoriosVisibles.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+    const pct = (v: number) => (hogares > 0 ? ((v / hogares) * 100).toFixed(1).replace('.', ',') : '0,0');
+
+    const siNbi = sum('si_nbi');
+    const hac = sum('hacinamiento');
+    const viv = sum('viv_inconveniente');
+    const san = sum('cond_sanitarias');
+    const esc = sum('escolaridad');
+    const sub = sum('capacidad_subsistencia');
+
+    return {
+      hogares,
+      siNbi,
+      hac,
+      viv,
+      san,
+      esc,
+      sub,
+      pctSiNbi: pct(siNbi),
+      pctHac: pct(hac),
+      pctViv: pct(viv),
+      pctSan: pct(san),
+      pctEsc: pct(esc),
+      pctSub: pct(sub),
+    };
+  }, [territoriosVisibles]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -244,22 +360,17 @@ export default function NBIPage() {
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      const aVal =
-        sortField === 'total_viviendas'
-          ? a.total_viviendas
-          : sortField === 'valor_nbi'
-          ? a[selectedComp]
-          : Number(a[`pct_${selectedComp}`]);
-      const bVal =
-        sortField === 'total_viviendas'
-          ? b.total_viviendas
-          : sortField === 'valor_nbi'
-          ? b[selectedComp]
-          : Number(b[`pct_${selectedComp}`]);
+      if (sortField === 'total_viviendas') {
+        const aVal = Number(a.total_viviendas) || 0;
+        const bVal = Number(b.total_viviendas) || 0;
+        return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+      }
 
+      const aVal = calcPctNumber(Number(a[sortField]) || 0, Number(a.total_viviendas) || 0);
+      const bVal = calcPctNumber(Number(b[sortField]) || 0, Number(b.total_viviendas) || 0);
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [territoriosVisibles, sortField, sortOrder, selectedComp]);
+  }, [territoriosVisibles, sortField, sortOrder]);
 
   return (
     <div className="container">
@@ -279,51 +390,71 @@ export default function NBIPage() {
       {/* Tarjetas KPI Superiores dinámicas con Tooltips */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            {seleccionCompleta ? 'Total Hogares Evaluados' : 'Hogares seleccionados'}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text={descripcionesComp.si_nbi} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Total Hogares Evaluados
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? totalSeleccionado.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincia de Corrientes' : 'Hogares en territorios seleccionados'}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsComp[selectedComp]} ({seleccionCompleta ? 'Corrientes' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b91c1c', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text={descripcionesComp[selectedComp]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsComp[selectedComp]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b91c1c' }}>
             {data ? pctCompProvincia : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
             {data ? `${hogaresCompSeleccionado.toLocaleString('es-AR')} hogares` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #f59e0b', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsComp[selectedComp]} (Región NEA)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b45309', lineHeight: 1.2 }}>
+              Región NEA
+            </span>
             <InfoTooltip text={descripcionesComp[selectedComp]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsComp[selectedComp]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b45309' }}>
             {pctCompNea}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Región NEA</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Nordeste Argentino</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            % {labelsComp[selectedComp]} (Total País)
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+              Total País
+            </span>
             <InfoTooltip text={descripcionesComp[selectedComp]} />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            % {labelsComp[selectedComp]}
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {pctCompPais}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Nacional</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>República Argentina</span>
         </div>
       </div>
 
@@ -346,25 +477,29 @@ export default function NBIPage() {
           <InfoTooltip text={descripcionesComp[selectedComp]} />
           <span style={{ marginLeft: 4 }}>:</span>
         </span>
-        {(
-          ['si_nbi', 'hacinamiento', 'viv_inconveniente', 'cond_sanitarias', 'escolaridad', 'capacidad_subsistencia'] as ComponenteNBI[]
-        ).map((comp) => (
+        {COMPONENTES_NBI.map((comp) => (
           <button
-            key={comp}
-            onClick={() => setSelectedComp(comp)}
+            key={comp.key}
+            onClick={() => {
+              setSelectedComp(comp.key);
+              if (viewMode === 'tabla') {
+                setSortField(comp.key);
+                setSortOrder('desc');
+              }
+            }}
             style={{
               border: '1px solid',
-              borderColor: selectedComp === comp ? '#10b981' : '#cbd5e1',
-              backgroundColor: selectedComp === comp ? '#14203b' : '#f8fafc',
-              color: selectedComp === comp ? '#ffffff' : '#334155',
+              borderColor: selectedComp === comp.key ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedComp === comp.key ? '#14203b' : '#f8fafc',
+              color: selectedComp === comp.key ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
               fontSize: '0.82rem',
-              fontWeight: selectedComp === comp ? 700 : 500,
+              fontWeight: selectedComp === comp.key ? 700 : 500,
               cursor: 'pointer',
             }}
           >
-            {labelsComp[comp]}
+            {comp.label}
           </button>
         ))}
       </div>
@@ -376,7 +511,9 @@ export default function NBIPage() {
             <div className="cardTitle">
               <AlertTriangle className="w-4 h-4 text-emerald-400" />
               <span>
-                {labelsComp[selectedComp]} por {viewMode === 'mapa' ? 'departamento' : 'municipio'}
+                {viewMode === 'tabla'
+                  ? 'Distribución completa de hogares con NBI por componente y municipio'
+                  : `Incidencia de ${labelsComp[selectedComp]} (%) por ${viewMode === 'mapa' ? 'departamento' : 'municipio'}`}
               </span>
             </div>
 
@@ -448,79 +585,162 @@ export default function NBIPage() {
                 <span>Calculando componentes NBI...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 600 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: 'Cantidad de Hogares',
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="municipio"
-                      width={175}
-                      stroke="#475569"
-                      fontSize={11}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(val: any) => [
-                        `${Number(val).toLocaleString('es-AR')} hogares`,
-                        labelsComp[selectedComp],
-                      ]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar dataKey={selectedComp} fill="#b91c1c" radius={[0, 4, 4, 0]}>
-                      <LabelList
-                        dataKey={selectedComp}
-                        position="right"
-                        formatter={(val: any) => Number(val).toLocaleString('es-AR')}
-                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                    >
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, xMax]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="municipio"
+                            width={185}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={10.5}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(val: any, _name: any, props: any) => {
+                              const hogares = Number(props?.payload?.[selectedComp]) || 0;
+                              return [
+                                `${formatPct(Number(val))} (${hogares.toLocaleString('es-AR')} hogares)`,
+                                labelsComp[selectedComp],
+                              ];
+                            }}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar dataKey="incidencia" fill="#b91c1c" radius={[0, 4, 4, 0]} barSize={18}>
+                            <LabelList
+                              dataKey="incidencia"
+                              position="right"
+                              formatter={(val: any) => formatPct(Number(val))}
+                              style={{ fill: '#334155', fontSize: 10.5, fontWeight: 600 }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X (32px eje Y + 6px margin + 185px YAxis = 223px izq, 65px + 17px scrollbar = 82px der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 223,
+                    paddingRight: 82,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {xTicks.map((tick) => {
+                      const pct = xMax > 0 ? (tick / xMax) * 100 : 0;
+                      const label =
+                        xMax <= 15
+                          ? `${Number(tick).toFixed(1).replace('.', ',')}%`
+                          : `${Math.round(tick)}%`;
+                      return (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${pct}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    Porcentaje de hogares con {labelsComp[selectedComp]} (%)
+                  </div>
+                </div>
               </div>
             ) : viewMode === 'mapa' ? (
               <CorrientesMap
@@ -539,7 +759,7 @@ export default function NBIPage() {
                   border: '1px solid #e2e8f0',
                 }}
               >
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <table style={{ width: '100%', minWidth: 1120, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                   <thead
                     style={{
                       position: 'sticky',
@@ -577,47 +797,106 @@ export default function NBIPage() {
                           {renderSortIcon('total_viviendas')}
                         </div>
                       </th>
-                      <th
-                        onClick={() => handleSort('valor_nbi')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>{labelsComp[selectedComp]}</span>
-                          {renderSortIcon('valor_nbi')}
-                        </div>
-                      </th>
-                      <th
-                        onClick={() => handleSort('pct_nbi')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>% Incidencia</span>
-                          {renderSortIcon('pct_nbi')}
-                        </div>
-                      </th>
+                      {COMPONENTES_NBI.map((comp) => (
+                        <th
+                          key={comp.key}
+                          onClick={() => handleSort(comp.key)}
+                          style={{
+                            padding: '10px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedComp === comp.key ? '#fef2f2' : '#ffffff',
+                            color: selectedComp === comp.key ? '#b91c1c' : '#475569',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                            <span>{comp.shortLabel}</span>
+                            {renderSortIcon(comp.key)}
+                          </div>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {detalleTablaOrdenado.map((row, idx: number) => (
-                      <tr
-                        key={row.locationKey || idx}
-                        style={{
-                          borderBottom: '1px solid #f1f5f9',
-                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
-                        }}
-                      >
-                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
-                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#b91c1c' }}>
-                          {row[selectedComp].toLocaleString('es-AR')}
-                        </td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
-                          {row[`pct_${selectedComp}`]} %
-                        </td>
-                      </tr>
-                    ))}
+                    {detalleTablaOrdenado.map((row, idx: number) => {
+                      const total = Number(row.total_viviendas) || 0;
+                      return (
+                        <tr
+                          key={row.locationKey || idx}
+                          style={{
+                            borderBottom: '1px solid #f1f5f9',
+                            backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                          }}
+                        >
+                          <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: '#14203b' }}>{row.municipio}</td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#14203b' }}>
+                            {total.toLocaleString('es-AR')}
+                          </td>
+                          {COMPONENTES_NBI.map((comp) => {
+                            const count = Number(row[comp.key]) || 0;
+                            const pct = calcPctNumber(count, total);
+                            return (
+                              <td
+                                key={comp.key}
+                                style={{
+                                  padding: '8px 12px',
+                                  textAlign: 'right',
+                                  backgroundColor:
+                                    selectedComp === comp.key ? 'rgba(220, 38, 38, 0.06)' : 'transparent',
+                                }}
+                              >
+                                <span style={{ fontWeight: 700, color: '#b91c1c' }}>
+                                  {formatPct(pct)}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                                  ({count.toLocaleString('es-AR')})
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  <tfoot>
+                    <tr
+                      style={{
+                        position: 'sticky',
+                        bottom: 0,
+                        backgroundColor: '#eaf2f8',
+                        color: '#14203b',
+                        fontWeight: 800,
+                        borderTop: '2px solid #cbd5e1',
+                      }}
+                    >
+                      <td colSpan={2} style={{ padding: '10px 12px' }}>
+                        Total seleccionado
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.hogares.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctSiNbi} % ({totalesTabla.siNbi.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctHac} % ({totalesTabla.hac.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctViv} % ({totalesTabla.viv.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctSan} % ({totalesTabla.san.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctEsc} % ({totalesTabla.esc.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctSub} % ({totalesTabla.sub.toLocaleString('es-AR')})
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}

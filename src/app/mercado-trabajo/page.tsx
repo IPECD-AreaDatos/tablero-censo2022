@@ -173,6 +173,24 @@ export default function MercadoTrabajoPage() {
   // KPIs superiores dinámicos según filtro territorial
   const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
 
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (detalleFiltrado.length === 0) return 'Sin selección';
+    if (detalleFiltrado.length === 1) {
+      return detalleFiltrado[0].municipio || detalleFiltrado[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(new Set(detalleFiltrado.map((t) => t.departamento)));
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = detalleOriginal.filter((t) => t.departamento === deptosUnicos[0]);
+      if (todosDelDepto.length === detalleFiltrado.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${detalleFiltrado.length} municipios`;
+  }, [seleccionCompleta, detalleFiltrado, detalleOriginal]);
+
   const kpisMostrados = useMemo(() => {
     if (seleccionCompleta || detalleFiltrado.length === 0) {
       return {
@@ -221,10 +239,12 @@ export default function MercadoTrabajoPage() {
   // Datos para el gráfico: ordenados de mayor a menor por el indicador seleccionado
   const datosGrafico = useMemo(() => {
     if (!territoriosVisibles.length) return [];
-    return [...territoriosVisibles]
-      .sort((a, b) => (Number(b[selectedIndicador]) || 0) - (Number(a[selectedIndicador]) || 0))
-      .slice(0, 25);
+    return [...territoriosVisibles].sort(
+      (a, b) => (Number(b[selectedIndicador]) || 0) - (Number(a[selectedIndicador]) || 0)
+    );
   }, [territoriosVisibles, selectedIndicador]);
+
+  const chartHeight = Math.max(520, datosGrafico.length * 28 + 60);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -309,36 +329,51 @@ export default function MercadoTrabajoPage() {
       {/* Tarjetas KPI Superiores dinámicas con Tooltips */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            Tasa de Actividad ({seleccionCompleta ? 'Provincial' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text="Personas que poseen una ocupación, o al menos, lo están buscando activamente." />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Tasa de Actividad
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {kpisMostrados.actividad}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            Tasa de Empleo ({seleccionCompleta ? 'Provincial' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text="Es el conjunto de personas que tienen al menos una ocupación, es decir que en la semana de referencia han trabajado al menos una hora." />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Tasa de Empleo
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {kpisMostrados.empleo}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626', overflow: 'visible' }}>
-          <span className="metricLabel" style={{ display: 'flex', alignItems: 'center' }}>
-            Tasa de Desocupación ({seleccionCompleta ? 'Provincial' : 'Selección'})
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b91c1c', lineHeight: 1.2 }}>
+              {etiquetaSeleccion}
+            </span>
             <InfoTooltip text="Personas que, no teniendo ocupación, están buscando activamente trabajo y están disponibles para trabajar." />
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Tasa de Desocupación
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b91c1c' }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b91c1c' }}>
             {kpisMostrados.desocupacion}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>{kpisMostrados.subtitulo}</span>
         </div>
       </div>
 
@@ -459,83 +494,155 @@ export default function MercadoTrabajoPage() {
                 <span>Calculando mercado de trabajo...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 600 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => `${v}%`}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: labelsIndicador[selectedIndicador],
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="municipio"
-                      width={175}
-                      stroke="#475569"
-                      fontSize={11}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(val) => [
-                        `${Number(val).toFixed(1).replace('.', ',')} %`,
-                        labelsIndicador[selectedIndicador].replace(' (%)', ''),
-                      ]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar
-                      dataKey={selectedIndicador}
-                      fill={getColorIndicador(selectedIndicador)}
-                      radius={[0, 4, 4, 0]}
                     >
-                      <LabelList
-                        dataKey={selectedIndicador}
-                        position="right"
-                        formatter={(val) => `${Number(val).toFixed(1).replace('.', ',')} %`}
-                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, 100]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="municipio"
+                            width={175}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={11}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(val) => [
+                              `${Number(val).toFixed(1).replace('.', ',')} %`,
+                              labelsIndicador[selectedIndicador].replace(' (%)', ''),
+                            ]}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar
+                            dataKey={selectedIndicador}
+                            fill={getColorIndicador(selectedIndicador)}
+                            radius={[0, 4, 4, 0]}
+                            barSize={18}
+                          >
+                            <LabelList
+                              dataKey={selectedIndicador}
+                              position="right"
+                              formatter={(val) => `${Number(val).toFixed(1).replace('.', ',')} %`}
+                              style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X con los mismos offsets exactos (32px eje Y + 6px margin + 175px YAxis = 213px a la izq, y 65px + 17px scrollbar = 82px a la der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 213,
+                    paddingRight: 82,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {[0, 25, 50, 75, 100].map((tick) => (
+                      <div
+                        key={tick}
+                        style={{
+                          position: 'absolute',
+                          left: `${tick}%`,
+                          top: 0,
+                          transform: 'translateX(-50%)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                        <span style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{tick}%</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    {labelsIndicador[selectedIndicador]}
+                  </div>
+                </div>
               </div>
             ) : viewMode === 'mapa' ? (
               <CorrientesMap

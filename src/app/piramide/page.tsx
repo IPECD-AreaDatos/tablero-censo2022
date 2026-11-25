@@ -49,13 +49,10 @@ function renderBarLabel(props: BarLabelProps, color: string, side: 'left' | 'rig
   ) return null;
 
   const text = Math.abs(Number(value)).toLocaleString('es-AR');
-  const fitsInside = Math.abs(barWidth) >= text.length * 6 + 8;
-  const labelX = fitsInside
-    ? side === 'left' ? barX + barWidth + 6 : barX + barWidth - 6
-    : side === 'left' ? barX + barWidth - 14 : barX + barWidth + 14;
-  const textAnchor = fitsInside
-    ? side === 'left' ? 'start' : 'end'
-    : side === 'left' ? 'end' : 'start';
+  // En barras negativas (izquierda), barX + barWidth es la punta izquierda de la barra
+  const tipX = barX + barWidth;
+  const labelX = side === 'left' ? tipX - 6 : tipX + 6;
+  const textAnchor = side === 'left' ? 'end' : 'start';
 
   return (
     <text
@@ -63,9 +60,9 @@ function renderBarLabel(props: BarLabelProps, color: string, side: 'left' | 'rig
       y={barY + barHeight / 2}
       dy="0.35em"
       textAnchor={textAnchor}
-      fill={fitsInside ? '#ffffff' : color}
-      fontSize={9}
-      fontWeight={600}
+      fill={color}
+      fontSize={10}
+      fontWeight={700}
       pointerEvents="none"
     >
       {text}
@@ -105,6 +102,40 @@ export default function PiramidePage() {
   const datosGrafico = useMemo(() => {
     return [...piramideOriginal].reverse();
   }, [piramideOriginal]);
+
+  const chartHeight = Math.max(540, datosGrafico.length * 28 + 20);
+
+  const { xMax, xTicks } = useMemo(() => {
+    const maxVal = datosGrafico.reduce((max: number, item: any) => {
+      const h = Math.abs(Number(item.hombresGrafico ?? item.hombres) || 0);
+      const m = Math.abs(Number(item.mujeres) || 0);
+      return Math.max(max, h, m);
+    }, 0);
+
+    if (maxVal === 0) return { xMax: 60000, xTicks: [-60000, -30000, 0, 30000, 60000] };
+
+    const targetMax = maxVal * 1.1;
+    const rawStep = targetMax / 2;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 : 10;
+
+    const halfStep = niceFraction * magnitude;
+    const top = halfStep * 2;
+
+    return {
+      xMax: top,
+      xTicks: [-top, -halfStep, 0, halfStep, top],
+    };
+  }, [datosGrafico]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -210,37 +241,57 @@ export default function PiramidePage() {
       </div>
 
       {/* Tarjetas KPI Superiores Dinámicas */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Población Total ({selectedYear})</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            Población Total
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Corrientes · Censo {selectedYear}
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? data.totalGeneral.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Total Provincial Relevado</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Total Provincial Relevado</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #1e3a8a' }}>
-          <span className="metricLabel">Varones ({data?.pctHombres || '0'} %)</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1e3a8a' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1e3a8a', lineHeight: 1.2 }}>
+            Varones
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            {data?.pctHombres || '0'} % del total
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1e3a8a' }}>
             {data ? data.totalHombres.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Población Masculina</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Población Masculina · Censo {selectedYear}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Mujeres ({data?.pctMujeres || '0'} %)</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+            Mujeres
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            {data?.pctMujeres || '0'} % del total
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {data ? data.totalMujeres.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Población Femenina</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Población Femenina · Censo {selectedYear}</span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Índice de Masculinidad</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+            Índice de Masculinidad
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Corrientes · Censo {selectedYear}
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {data ? data.indiceMasculinidad : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Varones cada 100 mujeres</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Varones cada 100 mujeres</span>
         </div>
       </div>
 
@@ -313,10 +364,12 @@ export default function PiramidePage() {
                   layout="vertical"
                   data={datosGrafico}
                   stackOffset="sign"
-                  margin={{ top: 20, right: 40, left: 20, bottom: 35 }}
+                  margin={{ top: 20, right: 65, left: 45, bottom: 35 }}
                 >
                   <XAxis
                     type="number"
+                    domain={[-xMax, xMax]}
+                    ticks={xTicks}
                     tickFormatter={(v) => Math.abs(Number(v)).toLocaleString('es-AR')}
                     stroke="#94a3b8"
                     fontSize={11}

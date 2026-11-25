@@ -5,16 +5,16 @@ import { apiPath } from '@/lib/api';
 import Link from 'next/link';
 import TerritoryFilter, { territoryKey } from '@/components/TerritoryFilter';
 import CorrientesMap from '@/components/CorrientesMap';
-import { 
-  Droplets, 
-  ChevronLeft, 
-  BarChart2, 
-  Table as TableIcon, 
+import {
+  Droplets,
+  ChevronLeft,
+  BarChart2,
+  Table as TableIcon,
   Map as MapIcon,
   Loader2,
   ArrowUpDown,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -27,7 +27,7 @@ import {
 } from 'recharts';
 
 type TipoAgua = 'red_publica' | 'bomba_motor' | 'pozo_sin_bomba' | 'cisterna_acequia' | 'otra';
-type SortField = 'departamento' | 'municipio' | 'total_viviendas' | 'valor_agua' | 'pct_agua';
+type SortField = 'departamento' | 'municipio' | 'total_viviendas' | TipoAgua;
 type SortOrder = 'asc' | 'desc';
 
 type AguaTerritory = {
@@ -47,9 +47,32 @@ type AguaTerritory = {
   pct_otra: string;
 };
 
-type VisibleAguaTerritory = AguaTerritory & { locationKey: string };
+type VisibleAguaTerritory = AguaTerritory & {
+  locationKey: string;
+  incidencia: number;
+};
+
+const TIPOS_AGUA: { key: TipoAgua; label: string; shortLabel: string }[] = [
+  { key: 'red_publica', label: 'Red Pública (Agua Corriente)', shortLabel: 'Red Pública' },
+  { key: 'bomba_motor', label: 'Bomba a Motor o Manual', shortLabel: 'Bomba Motor / Manual' },
+  { key: 'pozo_sin_bomba', label: 'Pozo sin Bomba', shortLabel: 'Pozo sin Bomba' },
+  { key: 'cisterna_acequia', label: 'Cisterna, Canal o Acequia', shortLabel: 'Cisterna / Acequia' },
+  { key: 'otra', label: 'Otra Procedencia', shortLabel: 'Otra Procedencia' },
+];
 
 const EMPTY_TERRITORIES: AguaTerritory[] = [];
+
+const normalizeText = (value: string) =>
+  (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const calcPctNumber = (valor: number, total: number) =>
+  total > 0 ? (valor / total) * 100 : 0;
+
+const formatPct = (pct: number) => `${pct.toFixed(1).replace('.', ',')} %`;
 
 export default function AguaPage() {
   const [data, setData] = useState<any>(null);
@@ -59,7 +82,7 @@ export default function AguaPage() {
   const [selectedLocations, setSelectedLocations] = useState<string[] | null>(null);
 
   // Estados de ordenamiento exclusivos de la tabla
-  const [sortField, setSortField] = useState<SortField>('valor_agua');
+  const [sortField, setSortField] = useState<SortField>('total_viviendas');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   useEffect(() => {
@@ -82,7 +105,8 @@ export default function AguaPage() {
   const detalleFiltrado = useMemo(
     () =>
       detalleOriginal.filter(
-        (territory) => selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
+        (territory) =>
+          selectedLocations === null || selectedLocations.includes(territoryKey(territory)),
       ),
     [detalleOriginal, selectedLocations],
   );
@@ -96,12 +120,17 @@ export default function AguaPage() {
   };
 
   const territoriosVisibles = useMemo<VisibleAguaTerritory[]>(() => {
-    return detalleFiltrado.map((territory) => ({
-      ...territory,
-      municipio: territory.municipio || territory.nombre || territory.departamento,
-      locationKey: territoryKey(territory),
-    }));
-  }, [detalleFiltrado]);
+    return detalleFiltrado.map((territory) => {
+      const total = Number(territory.total_viviendas) || 0;
+      const val = Number(territory[selectedTipo]) || 0;
+      return {
+        ...territory,
+        municipio: territory.municipio || territory.nombre || territory.departamento,
+        locationKey: territoryKey(territory),
+        incidencia: calcPctNumber(val, total),
+      };
+    });
+  }, [detalleFiltrado, selectedTipo]);
 
   // Datos consolidados por departamento para el Mapa (% de incidencia de la procedencia elegida)
   const datosMapa = useMemo(() => {
@@ -129,16 +158,9 @@ export default function AguaPage() {
 
   // Clic en un departamento del mapa para aislarlo o restaurar toda la selección
   const handleSelectTerritoryOnMap = (deptoName: string) => {
-    const norm = (s: string) =>
-      (s || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .trim();
-    const target = norm(deptoName);
-
+    const target = normalizeText(deptoName);
     const keysDelDepto = detalleOriginal
-      .filter((t) => norm(t.departamento) === target)
+      .filter((t) => normalizeText(t.departamento) === target)
       .map(territoryKey);
 
     if (!keysDelDepto.length) return;
@@ -154,13 +176,36 @@ export default function AguaPage() {
   };
 
   // Cálculos dinámicos de las 4 tarjetas KPI superiores según selección territorial
-  const seleccionCompleta = selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+  const seleccionCompleta =
+    selectedLocations === null || selectedLocations.length === detalleOriginal.length;
+
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (detalleFiltrado.length === 0) return 'Sin selección';
+    if (detalleFiltrado.length === 1) {
+      return detalleFiltrado[0].municipio || detalleFiltrado[0].nombre || detalleFiltrado[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(
+      new Set(detalleFiltrado.map((t) => t.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = detalleOriginal.filter(
+        (t) => (t.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === detalleFiltrado.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${detalleFiltrado.length} municipios`;
+  }, [seleccionCompleta, detalleFiltrado, detalleOriginal]);
 
   const kpisDinamicos = useMemo(() => {
-    const totalViviendas = detalleFiltrado.reduce((acc, t) => acc + t.total_viviendas, 0);
-    const sumRed = detalleFiltrado.reduce((acc, t) => acc + t.red_publica, 0);
-    const sumMotor = detalleFiltrado.reduce((acc, t) => acc + t.bomba_motor, 0);
-    const sumPozo = detalleFiltrado.reduce((acc, t) => acc + t.pozo_sin_bomba, 0);
+    const totalViviendas = detalleFiltrado.reduce((acc, t) => acc + (Number(t.total_viviendas) || 0), 0);
+    const sumRed = detalleFiltrado.reduce((acc, t) => acc + (Number(t.red_publica) || 0), 0);
+    const sumMotor = detalleFiltrado.reduce((acc, t) => acc + (Number(t.bomba_motor) || 0), 0);
+    const sumPozo = detalleFiltrado.reduce((acc, t) => acc + (Number(t.pozo_sin_bomba) || 0), 0);
 
     const fmtPct = (v: number) =>
       totalViviendas > 0 ? `${((v / totalViviendas) * 100).toFixed(1).replace('.', ',')} %` : '0,0 %';
@@ -176,13 +221,78 @@ export default function AguaPage() {
     };
   }, [detalleFiltrado]);
 
-  // Datos fijos para el gráfico: ordenados de mayor a menor por el tipo de agua seleccionado
+  // Todos los municipios ordenados de mayor a menor por % de incidencia
   const datosGrafico = useMemo(() => {
     if (!territoriosVisibles.length) return [];
-    return [...territoriosVisibles]
-      .sort((a, b) => (Number(b[selectedTipo]) || 0) - (Number(a[selectedTipo]) || 0))
-      .slice(0, 25);
-  }, [territoriosVisibles, selectedTipo]);
+    return [...territoriosVisibles].sort((a, b) => b.incidencia - a.incidencia);
+  }, [territoriosVisibles]);
+
+  const chartHeight = Math.max(500, datosGrafico.length * 28 + 30);
+
+  // Escala porcentual dinámica para que tanto Red Pública (100%) como Pozo/Cisterna aprovechen bien el ancho
+  const { xMax, xTicks } = useMemo(() => {
+    const maxVal = datosGrafico.reduce(
+      (max, item) => Math.max(max, Number(item.incidencia) || 0),
+      0,
+    );
+    if (maxVal === 0) return { xMax: 100, xTicks: [0, 25, 50, 75, 100] };
+
+    const targetMax = Math.min(100, maxVal * 1.15);
+    const rawStep = targetMax / 4;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+    const normalized = rawStep / magnitude;
+
+    const niceFraction =
+      normalized <= 1 ? 1 :
+      normalized <= 1.25 ? 1.25 :
+      normalized <= 1.5 ? 1.5 :
+      normalized <= 2 ? 2 :
+      normalized <= 2.5 ? 2.5 :
+      normalized <= 3 ? 3 :
+      normalized <= 4 ? 4 :
+      normalized <= 5 ? 5 : 10;
+
+    const niceStep = niceFraction * magnitude;
+    const top = Math.min(100, niceStep * 4);
+    const step = top / 4;
+
+    return {
+      xMax: top,
+      xTicks: [0, step, step * 2, step * 3, top],
+    };
+  }, [datosGrafico]);
+
+  // Totales de las 5 procedencias para el pie fijo de la tabla
+  const totalesTabla = useMemo(() => {
+    const viviendas = territoriosVisibles.reduce(
+      (acc, r) => acc + (Number(r.total_viviendas) || 0),
+      0,
+    );
+    const sum = (key: TipoAgua) =>
+      territoriosVisibles.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+    const pct = (v: number) =>
+      viviendas > 0 ? ((v / viviendas) * 100).toFixed(1).replace('.', ',') : '0,0';
+
+    const red = sum('red_publica');
+    const motor = sum('bomba_motor');
+    const pozo = sum('pozo_sin_bomba');
+    const cisterna = sum('cisterna_acequia');
+    const otra = sum('otra');
+
+    return {
+      viviendas,
+      red,
+      motor,
+      pozo,
+      cisterna,
+      otra,
+      pctRed: pct(red),
+      pctMotor: pct(motor),
+      pctPozo: pct(pozo),
+      pctCisterna: pct(cisterna),
+      pctOtra: pct(otra),
+    };
+  }, [territoriosVisibles]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -222,23 +332,17 @@ export default function AguaPage() {
         return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
       }
 
-      let aVal = 0;
-      let bVal = 0;
-
       if (sortField === 'total_viviendas') {
-        aVal = Number(a.total_viviendas) || 0;
-        bVal = Number(b.total_viviendas) || 0;
-      } else if (sortField === 'valor_agua') {
-        aVal = Number(a[selectedTipo]) || 0;
-        bVal = Number(b[selectedTipo]) || 0;
-      } else if (sortField === 'pct_agua') {
-        aVal = parseFloat(String(a[`pct_${selectedTipo}`] || '0').replace(',', '.')) || 0;
-        bVal = parseFloat(String(b[`pct_${selectedTipo}`] || '0').replace(',', '.')) || 0;
+        const aVal = Number(a.total_viviendas) || 0;
+        const bVal = Number(b.total_viviendas) || 0;
+        return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
       }
 
+      const aVal = calcPctNumber(Number(a[sortField]) || 0, Number(a.total_viviendas) || 0);
+      const bVal = calcPctNumber(Number(b[sortField]) || 0, Number(b.total_viviendas) || 0);
       return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
     });
-  }, [territoriosVisibles, sortField, sortOrder, selectedTipo]);
+  }, [territoriosVisibles, sortField, sortOrder]);
 
   const getColorAgua = (tipo: TipoAgua) => {
     switch (tipo) {
@@ -288,43 +392,61 @@ export default function AguaPage() {
       {/* Tarjetas KPI conectadas dinámicamente al filtro territorial */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">
-            {seleccionCompleta ? 'Total Viviendas Evaluadas' : 'Viviendas Seleccionadas'}
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Total Viviendas Evaluadas
           </span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {data ? kpisDinamicos.totalViviendas.toLocaleString('es-AR') : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
-            {seleccionCompleta ? 'Total Provincial Calculado' : 'Territorios seleccionados'}
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincia de Corrientes' : 'Viviendas en territorios seleccionados'}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Por Red Pública</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Por Red Pública
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {data ? kpisDinamicos.pctRedPublica : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
             {data ? `${kpisDinamicos.sumRedPublica.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Bomba a Motor o Manual</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#1d4ed8' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Bomba a Motor o Manual
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#1d4ed8' }}>
             {data ? kpisDinamicos.pctBombaMotor : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
             {data ? `${kpisDinamicos.sumBombaMotor.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #d97706' }}>
-          <span className="metricLabel">Pozo sin Bomba</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#b45309' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#b45309', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Pozo sin Bomba
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#b45309' }}>
             {data ? kpisDinamicos.pctPozo : '...'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
             {data ? `${kpisDinamicos.sumPozo.toLocaleString('es-AR')} viviendas` : ''}
           </span>
         </div>
@@ -347,23 +469,29 @@ export default function AguaPage() {
         <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#14203b', marginRight: 8 }}>
           PROCEDENCIA DEL AGUA:
         </span>
-        {(['red_publica', 'bomba_motor', 'pozo_sin_bomba', 'cisterna_acequia', 'otra'] as TipoAgua[]).map((t) => (
+        {TIPOS_AGUA.map((t) => (
           <button
-            key={t}
-            onClick={() => setSelectedTipo(t)}
+            key={t.key}
+            onClick={() => {
+              setSelectedTipo(t.key);
+              if (viewMode === 'tabla') {
+                setSortField(t.key);
+                setSortOrder('desc');
+              }
+            }}
             style={{
               border: '1px solid',
-              borderColor: selectedTipo === t ? '#10b981' : '#cbd5e1',
-              backgroundColor: selectedTipo === t ? '#1b2d57' : '#f8fafc',
-              color: selectedTipo === t ? '#ffffff' : '#334155',
+              borderColor: selectedTipo === t.key ? '#10b981' : '#cbd5e1',
+              backgroundColor: selectedTipo === t.key ? '#14203b' : '#f8fafc',
+              color: selectedTipo === t.key ? '#ffffff' : '#334155',
               padding: '6px 14px',
               borderRadius: 8,
               fontSize: '0.82rem',
-              fontWeight: selectedTipo === t ? 700 : 500,
+              fontWeight: selectedTipo === t.key ? 700 : 500,
               cursor: 'pointer',
             }}
           >
-            {labelsAgua[t].split(' (')[0]}
+            {t.shortLabel}
           </button>
         ))}
       </div>
@@ -375,7 +503,9 @@ export default function AguaPage() {
             <div className="cardTitle">
               <Droplets className="w-4 h-4 text-emerald-400" />
               <span>
-                Distribución de {labelsAgua[selectedTipo]} por {viewMode === 'mapa' ? 'departamento' : 'municipio'}
+                {viewMode === 'tabla'
+                  ? 'Distribución completa de viviendas por procedencia del agua y municipio'
+                  : `Incidencia de ${labelsAgua[selectedTipo]} (%) por ${viewMode === 'mapa' ? 'departamento' : 'municipio'}`}
               </span>
             </div>
 
@@ -447,83 +577,167 @@ export default function AguaPage() {
                 <span>Calculando procedencia de agua...</span>
               </div>
             ) : viewMode === 'grafico' ? (
-              <div style={{ width: '100%', height: 600 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    layout="vertical"
-                    data={datosGrafico}
-                    margin={{ top: 20, right: 65, left: 20, bottom: 35 }}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  borderRadius: 8,
+                  border: '1px solid #e2e8f0',
+                  backgroundColor: '#ffffff',
+                }}
+              >
+                {/* Contenedor principal con etiqueta fija del Eje Y + área scrolleable */}
+                <div style={{ display: 'flex', alignItems: 'stretch' }}>
+                  {/* Título fijo del Eje Y */}
+                  <div
+                    style={{
+                      width: 32,
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderRight: '1px solid #f1f5f9',
+                    }}
                   >
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => Number(v).toLocaleString('es-AR')}
-                      stroke="#94a3b8"
-                      fontSize={11}
-                      label={{
-                        value: 'Cantidad de Viviendas Particulares',
-                        position: 'insideBottom',
-                        offset: -18,
-                        fill: '#64748b',
+                    <span
+                      style={{
+                        writingMode: 'vertical-rl',
+                        transform: 'rotate(180deg)',
+                        color: '#64748b',
                         fontSize: 12,
                         fontWeight: 600,
+                        whiteSpace: 'nowrap',
                       }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="municipio"
-                      width={175}
-                      stroke="#475569"
-                      fontSize={11}
-                      tickLine={false}
-                      label={{
-                        value: 'Municipio',
-                        angle: -90,
-                        position: 'insideLeft',
-                        offset: -10,
-                        fill: '#64748b',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        style: { textAnchor: 'middle' },
-                      }}
-                    />
-                    <Tooltip
-                      formatter={(val: any) => [
-                        `${Number(val).toLocaleString('es-AR')} viviendas`,
-                        labelsAgua[selectedTipo],
-                      ]}
-                      contentStyle={{
-                        backgroundColor: '#0f172a',
-                        borderRadius: 8,
-                        border: '1px solid #334155',
-                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                        padding: '8px 12px',
-                      }}
-                      labelStyle={{
-                        color: '#ffffff',
-                        fontWeight: 600,
-                        marginBottom: 4,
-                        fontSize: '0.8rem',
-                      }}
-                      itemStyle={{
-                        color: '#34d399',
-                        fontWeight: 700,
-                        fontSize: '0.82rem',
-                      }}
-                    />
-                    <Bar
-                      dataKey={selectedTipo}
-                      fill={getColorAgua(selectedTipo)}
-                      radius={[0, 4, 4, 0]}
                     >
-                      <LabelList
-                        dataKey={selectedTipo}
-                        position="right"
-                        formatter={(val: any) => Number(val).toLocaleString('es-AR')}
-                        style={{ fill: '#334155', fontSize: 11, fontWeight: 600 }}
-                      />
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+                      Municipio
+                    </span>
+                  </div>
+
+                  {/* Lista scrolleable de barras */}
+                  <div
+                    style={{
+                      flex: 1,
+                      maxHeight: '500px',
+                      overflowY: 'scroll',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: '100%', height: chartHeight }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart
+                          layout="vertical"
+                          data={datosGrafico}
+                          margin={{ top: 14, right: 65, left: 6, bottom: 8 }}
+                        >
+                          <XAxis type="number" domain={[0, xMax]} hide />
+                          <YAxis
+                            type="category"
+                            dataKey="municipio"
+                            width={185}
+                            interval={0}
+                            stroke="#475569"
+                            fontSize={10.5}
+                            tickLine={false}
+                          />
+                          <Tooltip
+                            formatter={(val: any, _name: any, props: any) => {
+                              const viviendas = Number(props?.payload?.[selectedTipo]) || 0;
+                              return [
+                                `${formatPct(Number(val))} (${viviendas.toLocaleString('es-AR')} viviendas)`,
+                                labelsAgua[selectedTipo],
+                              ];
+                            }}
+                            contentStyle={{
+                              backgroundColor: '#0f172a',
+                              borderRadius: 8,
+                              border: '1px solid #334155',
+                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                              padding: '8px 12px',
+                            }}
+                            labelStyle={{
+                              color: '#ffffff',
+                              fontWeight: 600,
+                              marginBottom: 4,
+                              fontSize: '0.8rem',
+                            }}
+                            itemStyle={{
+                              color: '#34d399',
+                              fontWeight: 700,
+                              fontSize: '0.82rem',
+                            }}
+                          />
+                          <Bar
+                            dataKey="incidencia"
+                            fill={getColorAgua(selectedTipo)}
+                            radius={[0, 4, 4, 0]}
+                            barSize={18}
+                          >
+                            <LabelList
+                              dataKey="incidencia"
+                              position="right"
+                              formatter={(val: any) => formatPct(Number(val))}
+                              style={{ fill: '#334155', fontSize: 10.5, fontWeight: 600 }}
+                            />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie fijo del Eje X (32px eje Y + 6px margin + 185px YAxis = 223px izq, 65px + 17px scrollbar = 82px der) */}
+                <div
+                  style={{
+                    borderTop: '1px solid #cbd5e1',
+                    backgroundColor: '#f8fafc',
+                    paddingTop: 6,
+                    paddingBottom: 10,
+                    paddingLeft: 223,
+                    paddingRight: 82,
+                    borderBottomLeftRadius: 8,
+                    borderBottomRightRadius: 8,
+                  }}
+                >
+                  <div style={{ position: 'relative', height: 22, borderTop: '1px solid #94a3b8' }}>
+                    {xTicks.map((tick) => {
+                      const pct = xMax > 0 ? (tick / xMax) * 100 : 0;
+                      const label =
+                        xMax <= 15
+                          ? `${Number(tick).toFixed(1).replace('.', ',')}%`
+                          : `${Math.round(tick)}%`;
+                      return (
+                        <div
+                          key={tick}
+                          style={{
+                            position: 'absolute',
+                            left: `${pct}%`,
+                            top: 0,
+                            transform: 'translateX(-50%)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <div style={{ width: 1, height: 5, backgroundColor: '#94a3b8' }} />
+                          <span style={{ fontSize: 11, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: '#475569',
+                      marginTop: 6,
+                    }}
+                  >
+                    Porcentaje de viviendas con {labelsAgua[selectedTipo]} (%)
+                  </div>
+                </div>
               </div>
             ) : viewMode === 'mapa' ? (
               <CorrientesMap
@@ -542,7 +756,7 @@ export default function AguaPage() {
                   border: '1px solid #e2e8f0',
                 }}
               >
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <table style={{ width: '100%', minWidth: 1020, borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                   <thead
                     style={{
                       position: 'sticky',
@@ -553,7 +767,7 @@ export default function AguaPage() {
                     }}
                   >
                     <tr style={{ borderBottom: '2px solid #cbd5e1', textAlign: 'left', color: '#475569' }}>
-                      <th 
+                      <th
                         onClick={() => handleSort('departamento')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -562,7 +776,7 @@ export default function AguaPage() {
                           {renderSortIcon('departamento')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('municipio')}
                         style={{ padding: '10px 12px', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -571,7 +785,7 @@ export default function AguaPage() {
                           {renderSortIcon('municipio')}
                         </div>
                       </th>
-                      <th 
+                      <th
                         onClick={() => handleSort('total_viviendas')}
                         style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
                       >
@@ -580,47 +794,103 @@ export default function AguaPage() {
                           {renderSortIcon('total_viviendas')}
                         </div>
                       </th>
-                      <th 
-                        onClick={() => handleSort('valor_agua')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>{labelsAgua[selectedTipo].split(' (')[0]}</span>
-                          {renderSortIcon('valor_agua')}
-                        </div>
-                      </th>
-                      <th 
-                        onClick={() => handleSort('pct_agua')}
-                        style={{ padding: '10px 12px', textAlign: 'right', backgroundColor: '#ffffff', cursor: 'pointer', userSelect: 'none' }}
-                      >
-                        <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
-                          <span>% Incidencia</span>
-                          {renderSortIcon('pct_agua')}
-                        </div>
-                      </th>
+                      {TIPOS_AGUA.map((tipo) => (
+                        <th
+                          key={tipo.key}
+                          onClick={() => handleSort(tipo.key)}
+                          style={{
+                            padding: '10px 12px',
+                            textAlign: 'right',
+                            backgroundColor: selectedTipo === tipo.key ? '#f0fdf4' : '#ffffff',
+                            color: selectedTipo === tipo.key ? getColorAgua(tipo.key) : '#475569',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                          }}
+                        >
+                          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', width: '100%' }}>
+                            <span>{tipo.shortLabel}</span>
+                            {renderSortIcon(tipo.key)}
+                          </div>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {detalleTablaOrdenado.map((row, idx: number) => (
-                      <tr
-                        key={row.locationKey || idx}
-                        style={{
-                          borderBottom: '1px solid #f1f5f9',
-                          backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
-                        }}
-                      >
-                        <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
-                        <td style={{ padding: '8px 12px', fontWeight: 600 }}>{row.municipio}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{row.total_viviendas.toLocaleString('es-AR')}</td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: getColorAgua(selectedTipo) }}>
-                          {row[selectedTipo].toLocaleString('es-AR')}
-                        </td>
-                        <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600 }}>
-                          {row[`pct_${selectedTipo}`] || '0'} %
-                        </td>
-                      </tr>
-                    ))}
+                    {detalleTablaOrdenado.map((row, idx: number) => {
+                      const total = Number(row.total_viviendas) || 0;
+                      return (
+                        <tr
+                          key={row.locationKey || idx}
+                          style={{
+                            borderBottom: '1px solid #f1f5f9',
+                            backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                          }}
+                        >
+                          <td style={{ padding: '8px 12px', color: '#64748b', fontWeight: 500 }}>{row.departamento}</td>
+                          <td style={{ padding: '8px 12px', fontWeight: 600, color: '#14203b' }}>{row.municipio}</td>
+                          <td style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 700, color: '#14203b' }}>
+                            {total.toLocaleString('es-AR')}
+                          </td>
+                          {TIPOS_AGUA.map((tipo) => {
+                            const count = Number(row[tipo.key]) || 0;
+                            const pct = calcPctNumber(count, total);
+                            return (
+                              <td
+                                key={tipo.key}
+                                style={{
+                                  padding: '8px 12px',
+                                  textAlign: 'right',
+                                  backgroundColor:
+                                    selectedTipo === tipo.key ? 'rgba(16, 185, 129, 0.06)' : 'transparent',
+                                }}
+                              >
+                                <span style={{ fontWeight: 700, color: getColorAgua(tipo.key) }}>
+                                  {formatPct(pct)}
+                                </span>
+                                <span style={{ fontSize: '0.72rem', color: '#64748b', marginLeft: 5 }}>
+                                  ({count.toLocaleString('es-AR')})
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  <tfoot>
+                    <tr
+                      style={{
+                        position: 'sticky',
+                        bottom: 0,
+                        backgroundColor: '#eaf2f8',
+                        color: '#14203b',
+                        fontWeight: 800,
+                        borderTop: '2px solid #cbd5e1',
+                      }}
+                    >
+                      <td colSpan={2} style={{ padding: '10px 12px' }}>
+                        Total seleccionado
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.viviendas.toLocaleString('es-AR')}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctRed} % ({totalesTabla.red.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctMotor} % ({totalesTabla.motor.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctPozo} % ({totalesTabla.pozo.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctCisterna} % ({totalesTabla.cisterna.toLocaleString('es-AR')})
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+                        {totalesTabla.pctOtra} % ({totalesTabla.otra.toLocaleString('es-AR')})
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}

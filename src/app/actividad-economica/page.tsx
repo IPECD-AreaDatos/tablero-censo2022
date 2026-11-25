@@ -110,6 +110,30 @@ export default function ActividadEconomicaPage() {
     (total: number, row: DisplayTerritory) => total + (Number(row.total) || 0),
     0,
   );
+  const seleccionCompleta =
+    selectedLocations === null || selectedLocations.length === territoriosBase.length;
+
+  const etiquetaSeleccion = useMemo(() => {
+    if (seleccionCompleta) return 'Corrientes';
+    if (territoriosSeleccionados.length === 0) return 'Sin selección';
+    if (territoriosSeleccionados.length === 1) {
+      return territoriosSeleccionados[0].municipio || territoriosSeleccionados[0].departamento;
+    }
+
+    const deptosUnicos = Array.from(
+      new Set(territoriosSeleccionados.map((t) => t.departamento || 'Sin departamento')),
+    );
+    if (deptosUnicos.length === 1) {
+      const todosDelDepto = territoriosBase.filter(
+        (t) => (t.departamento || 'Sin departamento') === deptosUnicos[0],
+      );
+      if (todosDelDepto.length === territoriosSeleccionados.length) {
+        return `Depto. ${deptosUnicos[0]}`;
+      }
+    }
+
+    return `${territoriosSeleccionados.length} municipios`;
+  }, [seleccionCompleta, territoriosSeleccionados, territoriosBase]);
   const datosGrafico = useMemo(() => sectores.map((sector) => ({
     ...sector,
     valor: territoriosSeleccionados.reduce(
@@ -164,29 +188,46 @@ export default function ActividadEconomicaPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 250px), 1fr))', gap: 16 }}>
         <div className="card" style={{ padding: '14px 18px' }}>
-          <span className="metricLabel">Población Ocupada Total Relevada</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#14203b', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Población Ocupada Total Relevada
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4 }}>
             {totalPoblacion ? totalPoblacion.toLocaleString('es-AR') : loading ? '...' : '0'}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Según territorios seleccionados</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+            {seleccionCompleta ? 'Total Provincia de Corrientes' : 'Ocupados en territorios seleccionados'}
+          </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #2563eb' }}>
-          <span className="metricLabel">Principal Rama de Empleo</span>
-          <span className="metricVal" style={{ fontSize: '1.25rem', marginTop: 4, color: '#1d4ed8' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1d4ed8', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Principal Rama de Empleo
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.2rem', marginTop: 4, color: '#1d4ed8', lineHeight: 1.25 }}>
             {principalSector?.sector || (loading ? '...' : 'Sin datos')}
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
             {principalSector ? `${principalSector.valor.toLocaleString('es-AR')} personas` : ''}
           </span>
         </div>
 
         <div className="card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <span className="metricLabel">Comercio e Industria Combinados</span>
-          <span className="metricVal" style={{ fontSize: '1.4rem', marginTop: 4, color: '#047857' }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#047857', lineHeight: 1.2 }}>
+            {etiquetaSeleccion}
+          </div>
+          <span className="metricLabel" style={{ marginTop: 2 }}>
+            Comercio e Industria Combinados
+          </span>
+          <span className="metricVal" style={{ fontSize: '1.45rem', marginTop: 4, color: '#047857' }}>
             {pctComercioIndustria} %
           </span>
-          <span style={{ fontSize: '0.65rem', color: '#94a3b8' }}>Participación en la selección</span>
+          <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Participación sobre ocupados</span>
         </div>
       </div>
 
